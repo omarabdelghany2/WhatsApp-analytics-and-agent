@@ -14,11 +14,10 @@ interface WebSocketMessage {
 
 const WebSocketContext = createContext<WebSocketContextType | undefined>(undefined)
 
-const envWsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws'
-// Ensure WSS in production
-const WS_URL = envWsUrl.startsWith('ws://') && !envWsUrl.includes('localhost')
-  ? envWsUrl.replace('ws://', 'wss://')
-  : envWsUrl
+// Use production URL or localhost for development
+const WS_URL = import.meta.env.DEV
+  ? 'ws://localhost:8000/ws'
+  : 'wss://backend-production-d7e2.up.railway.app/ws'
 
 export function WebSocketProvider({ children }: { children: ReactNode }) {
   const [isConnected, setIsConnected] = useState(false)

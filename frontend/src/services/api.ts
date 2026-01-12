@@ -1,8 +1,7 @@
-const envUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-// Ensure HTTPS in production
-const API_BASE_URL = envUrl.startsWith('http://') && !envUrl.includes('localhost')
-  ? envUrl.replace('http://', 'https://')
-  : envUrl
+// Use production URL or localhost for development
+const API_BASE_URL = import.meta.env.DEV
+  ? 'http://localhost:8000'
+  : 'https://backend-production-d7e2.up.railway.app'
 
 class ApiClient {
   private token: string | null = null
