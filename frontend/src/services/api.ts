@@ -248,7 +248,7 @@ class ApiClient {
     if (params?.date_to) searchParams.append('date_to', params.date_to)
     if (params?.group_id) searchParams.append('group_id', params.group_id.toString())
 
-    return this.request(`/api/events/summary?${searchParams}`)
+    return this.request<{ total_joins: number; total_leaves: number; net_change: number }>(`/api/events/summary?${searchParams}`)
   }
 
   // Stats
