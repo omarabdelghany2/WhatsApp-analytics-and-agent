@@ -1,4 +1,8 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const envUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+// Ensure HTTPS in production
+const API_BASE_URL = envUrl.startsWith('http://') && !envUrl.includes('localhost')
+  ? envUrl.replace('http://', 'https://')
+  : envUrl
 
 class ApiClient {
   private token: string | null = null
