@@ -1,7 +1,7 @@
-// Detect environment at runtime
+// Detect environment at runtime using current protocol
 const API_BASE_URL = window.location.hostname === 'localhost'
   ? 'http://localhost:8000'
-  : 'https://backend-production-d7e2.up.railway.app'
+  : `${window.location.protocol}//backend-production-d7e2.up.railway.app`
 
 class ApiClient {
   private token: string | null = null
