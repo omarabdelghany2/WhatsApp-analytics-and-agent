@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.Python
+env/
+venv/
+.venv/
+
+# WhatsApp session data (sensitive!)
+.wwebjs_auth/
+.wwebjs_cache/
+data/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+
+# Uploads (if large/sensitive)
+uploads/
+
+# Python
+*.egg
+.eggs/
+*.so
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
