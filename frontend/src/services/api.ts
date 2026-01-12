@@ -1,5 +1,5 @@
-// Use production URL or localhost for development
-const API_BASE_URL = import.meta.env.DEV
+// Detect environment at runtime
+const API_BASE_URL = window.location.hostname === 'localhost'
   ? 'http://localhost:8000'
   : 'https://backend-production-d7e2.up.railway.app'
 

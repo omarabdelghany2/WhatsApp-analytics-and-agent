@@ -14,8 +14,8 @@ interface WebSocketMessage {
 
 const WebSocketContext = createContext<WebSocketContextType | undefined>(undefined)
 
-// Use production URL or localhost for development
-const WS_URL = import.meta.env.DEV
+// Detect environment at runtime
+const WS_URL = window.location.hostname === 'localhost'
   ? 'ws://localhost:8000/ws'
   : 'wss://backend-production-d7e2.up.railway.app/ws'
 
