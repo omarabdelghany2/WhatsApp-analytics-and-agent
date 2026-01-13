@@ -1,7 +1,10 @@
 // Detect environment at runtime using current protocol
-const API_BASE_URL = window.location.hostname === 'localhost'
-  ? 'http://localhost:8000'
-  : `${window.location.protocol}//backend-production-d7e2.up.railway.app`
+function getApiBaseUrl(): string {
+  if (window.location.hostname === 'localhost') {
+    return 'http://localhost:8000'
+  }
+  return `${window.location.protocol}//backend-production-d7e2.up.railway.app`
+}
 
 class ApiClient {
   private token: string | null = null
@@ -30,7 +33,7 @@ class ApiClient {
       ...options.headers,
     }
 
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    const response = await fetch(`${getApiBaseUrl()}${endpoint}`, {
       ...options,
       headers,
     })
@@ -213,7 +216,7 @@ class ApiClient {
     if (params?.group_id) searchParams.append('group_id', params.group_id.toString())
 
     const token = this.getToken()
-    const response = await fetch(`${API_BASE_URL}/api/events/export/csv?${searchParams}`, {
+    const response = await fetch(`${getApiBaseUrl()}/api/events/export/csv?${searchParams}`, {
       headers: {
         ...(token && { Authorization: `Bearer ${token}` }),
       },
@@ -526,7 +529,7 @@ class ApiClient {
     if (params?.group_id) searchParams.append('group_id', params.group_id.toString())
 
     const token = this.getToken()
-    const response = await fetch(`${API_BASE_URL}/api/certificates/export/csv?${searchParams}`, {
+    const response = await fetch(`${getApiBaseUrl()}/api/certificates/export/csv?${searchParams}`, {
       headers: {
         ...(token && { Authorization: `Bearer ${token}` }),
       },
@@ -593,7 +596,7 @@ class ApiClient {
     if (mentionIds) formData.append('mention_ids', JSON.stringify(mentionIds))
 
     const token = this.getToken()
-    const response = await fetch(`${API_BASE_URL}/api/groups/${groupId}/send-media`, {
+    const response = await fetch(`${getApiBaseUrl()}/api/groups/${groupId}/send-media`, {
       method: 'POST',
       headers: {
         ...(token && { Authorization: `Bearer ${token}` }),
@@ -646,7 +649,7 @@ class ApiClient {
     if (scheduledAt) formData.append('scheduled_at', scheduledAt)
 
     const token = this.getToken()
-    const response = await fetch(`${API_BASE_URL}/api/broadcast/send-media`, {
+    const response = await fetch(`${getApiBaseUrl()}/api/broadcast/send-media`, {
       method: 'POST',
       headers: {
         ...(token && { Authorization: `Bearer ${token}` }),
@@ -903,7 +906,7 @@ class ApiClient {
     formData.append('image', image)
 
     const token = this.getToken()
-    const response = await fetch(`${API_BASE_URL}/api/welcome/upload-image`, {
+    const response = await fetch(`${getApiBaseUrl()}/api/welcome/upload-image`, {
       method: 'POST',
       headers: {
         ...(token && { Authorization: `Bearer ${token}` }),
