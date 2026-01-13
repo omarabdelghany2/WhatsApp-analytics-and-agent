@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState, useRef, useMemo } from 'react'
+import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../services/api'
 import {
   MessageSquare,
@@ -57,20 +57,67 @@ export default function WelcomeMessagePage() {
   const [threshold, setThreshold] = useState(1)
   const [welcomeText, setWelcomeText] = useState('')
   const [selectedMemberPhones, setSelectedMemberPhones] = useState<string[]>([])
-  const [manualPhoneInput, setManualPhoneInput] = useState('')
-  const [currentWhatsappGroupId, setCurrentWhatsappGroupId] = useState<string | null>(null)
   const [part2Enabled, setPart2Enabled] = useState(false)
   const [part2Text, setPart2Text] = useState('')
   const [selectedImage, setSelectedImage] = useState<File | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Fetch group members when editing a single group
-  const { data: membersData, isLoading: membersLoading } = useQuery({
-    queryKey: ['group-members', currentWhatsappGroupId],
-    queryFn: () => currentWhatsappGroupId ? api.getGroupMembers(currentWhatsappGroupId) : null,
-    enabled: !!currentWhatsappGroupId && selectedGroups.length === 1,
+  // Get whatsapp group IDs for selected groups
+  const selectedWhatsappGroupIds = useMemo(() => {
+    if (!welcomeData?.groups) return []
+    return selectedGroups
+      .map(id => welcomeData.groups.find(g => g.id === id)?.whatsapp_group_id)
+      .filter((id): id is string => !!id)
+  }, [selectedGroups, welcomeData?.groups])
+
+  // Fetch members for all selected groups
+  const membersQueries = useQueries({
+    queries: selectedWhatsappGroupIds.map(groupId => ({
+      queryKey: ['group-members', groupId],
+      queryFn: () => api.getGroupMembers(groupId),
+      enabled: selectedGroups.length > 0,
+    })),
   })
+
+  // Calculate common members across all selected groups
+  const { commonMembers, membersLoading } = useMemo(() => {
+    const loading = membersQueries.some(q => q.isLoading)
+    if (loading || membersQueries.length === 0) {
+      return { commonMembers: [], membersLoading: loading }
+    }
+
+    // Get members from each group
+    const allGroupMembers = membersQueries
+      .map(q => q.data?.members || [])
+      .filter(members => members.length > 0)
+
+    if (allGroupMembers.length === 0) {
+      return { commonMembers: [], membersLoading: false }
+    }
+
+    // For single group, return all members
+    if (allGroupMembers.length === 1) {
+      return { commonMembers: allGroupMembers[0], membersLoading: false }
+    }
+
+    // Find intersection by phone number
+    const firstGroupPhones = new Set(allGroupMembers[0].map(m => m.phone))
+
+    // Keep only phones that exist in ALL groups
+    for (let i = 1; i < allGroupMembers.length; i++) {
+      const groupPhones = new Set(allGroupMembers[i].map(m => m.phone))
+      for (const phone of firstGroupPhones) {
+        if (!groupPhones.has(phone)) {
+          firstGroupPhones.delete(phone)
+        }
+      }
+    }
+
+    // Return members from first group that are common to all
+    const common = allGroupMembers[0].filter(m => firstGroupPhones.has(m.phone))
+    return { commonMembers: common, membersLoading: false }
+  }, [membersQueries])
 
   // Fetch welcome settings
   const { data: welcomeData, isLoading, refetch } = useQuery({
@@ -136,8 +183,6 @@ export default function WelcomeMessagePage() {
     setThreshold(1)
     setWelcomeText('')
     setSelectedMemberPhones([])
-    setManualPhoneInput('')
-    setCurrentWhatsappGroupId(null)
     setPart2Enabled(false)
     setPart2Text('')
     setSelectedImage(null)
@@ -150,8 +195,6 @@ export default function WelcomeMessagePage() {
     setThreshold(group.welcome_threshold || 1)
     setWelcomeText(group.welcome_text || '')
     setSelectedMemberPhones(group.welcome_extra_mentions || [])
-    setManualPhoneInput(group.welcome_extra_mentions?.join(', ') || '')
-    setCurrentWhatsappGroupId(group.whatsapp_group_id)
     setPart2Enabled(group.welcome_part2_enabled || false)
     setPart2Text(group.welcome_part2_text || '')
     setSelectedImage(null) // Can't pre-load existing image file
@@ -169,23 +212,11 @@ export default function WelcomeMessagePage() {
 
   // Handle group selection
   const toggleGroup = (groupId: number) => {
-    setSelectedGroups((prev) => {
-      const newSelection = prev.includes(groupId)
+    setSelectedGroups((prev) =>
+      prev.includes(groupId)
         ? prev.filter((id) => id !== groupId)
         : [...prev, groupId]
-
-      // Update currentWhatsappGroupId when exactly one group is selected
-      if (newSelection.length === 1) {
-        const selectedGroup = welcomeData?.groups?.find(g => g.id === newSelection[0])
-        if (selectedGroup) {
-          setCurrentWhatsappGroupId(selectedGroup.whatsapp_group_id)
-        }
-      } else {
-        setCurrentWhatsappGroupId(null)
-      }
-
-      return newSelection
-    })
+    )
   }
 
   const selectAllGroups = () => {
@@ -202,24 +233,12 @@ export default function WelcomeMessagePage() {
   const handleSave = async () => {
     if (selectedGroups.length === 0) return
 
-    // Use member selector for single group, manual input for multiple groups
-    let mentionsList: string[] = []
-    if (selectedGroups.length === 1 && currentWhatsappGroupId) {
-      mentionsList = selectedMemberPhones
-    } else {
-      // Parse from manual input
-      mentionsList = manualPhoneInput
-        .split(',')
-        .map(phone => phone.trim().replace(/[^0-9+]/g, ''))
-        .filter(phone => phone.length > 0)
-    }
-
     await updateBulkMutation.mutateAsync({
       group_ids: selectedGroups,
       enabled,
       threshold,
       text: welcomeText || undefined,
-      extra_mentions: mentionsList.length > 0 ? mentionsList : undefined,
+      extra_mentions: selectedMemberPhones.length > 0 ? selectedMemberPhones : undefined,
       part2_enabled: part2Enabled,
       part2_text: part2Text || undefined,
     })
@@ -528,19 +547,21 @@ export default function WelcomeMessagePage() {
                       Extra Mentions (Optional)
                     </label>
                     <p className="text-xs text-slate-400 mb-2">
-                      Select members to mention at the end of the welcome message
+                      {selectedGroups.length > 1
+                        ? `Select common members across ${selectedGroups.length} groups to mention`
+                        : 'Select members to mention at the end of the welcome message'}
                     </p>
 
-                    {selectedGroups.length === 1 && currentWhatsappGroupId ? (
+                    {selectedGroups.length > 0 ? (
                       <div className="bg-slate-700/50 rounded-lg border border-slate-600 overflow-hidden">
                         {membersLoading ? (
                           <div className="p-4 text-center">
                             <Loader2 size={20} className="animate-spin mx-auto text-blue-400" />
                             <p className="text-sm text-slate-400 mt-2">Loading members...</p>
                           </div>
-                        ) : membersData?.members && membersData.members.length > 0 ? (
+                        ) : commonMembers.length > 0 ? (
                           <div className="max-h-48 overflow-y-auto">
-                            {membersData.members.map((member) => (
+                            {commonMembers.map((member) => (
                               <button
                                 key={member.id}
                                 type="button"
@@ -569,7 +590,11 @@ export default function WelcomeMessagePage() {
                         ) : (
                           <div className="p-4 text-center text-slate-400">
                             <Users size={24} className="mx-auto mb-2 opacity-50" />
-                            <p className="text-sm">No members found</p>
+                            <p className="text-sm">
+                              {selectedGroups.length > 1
+                                ? 'No common members found across selected groups'
+                                : 'No members found'}
+                            </p>
                           </div>
                         )}
 
@@ -582,20 +607,9 @@ export default function WelcomeMessagePage() {
                         )}
                       </div>
                     ) : (
-                      <div>
-                        <p className="text-xs text-slate-400 mb-2">
-                          Enter phone numbers manually (comma-separated, e.g., +201234567890, +201098765432)
-                        </p>
-                        <input
-                          type="text"
-                          value={manualPhoneInput}
-                          onChange={(e) => setManualPhoneInput(e.target.value)}
-                          placeholder="+201234567890, +201098765432"
-                          className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                        <p className="text-xs text-slate-500 mt-2">
-                          Tip: Select a single group to pick members from a list
-                        </p>
+                      <div className="p-4 bg-slate-700/30 rounded-lg text-center text-slate-400">
+                        <Users size={24} className="mx-auto mb-2 opacity-50" />
+                        <p className="text-sm">Select groups to see available members</p>
                       </div>
                     )}
                   </div>
