@@ -32,6 +32,9 @@ def get_events(
     """Get events with optional filtering"""
     query = db.query(Event).filter(Event.user_id == current_user.id)
 
+    # Exclude certificates by default - they have their own page
+    query = query.filter(Event.event_type.in_(["JOIN", "LEAVE"]))
+
     # Apply filters
     if event_type:
         query = query.filter(Event.event_type == event_type.upper())
@@ -88,6 +91,9 @@ def get_group_events(
         Event.user_id == current_user.id,
         Event.group_id == group_id
     )
+
+    # Exclude certificates by default
+    query = query.filter(Event.event_type.in_(["JOIN", "LEAVE"]))
 
     # Apply filters
     if event_type:
@@ -201,6 +207,9 @@ def export_events_csv(
 ):
     """Export filtered events to CSV file"""
     query = db.query(Event).filter(Event.user_id == current_user.id)
+
+    # Exclude certificates by default
+    query = query.filter(Event.event_type.in_(["JOIN", "LEAVE"]))
 
     # Apply filters
     if event_type:

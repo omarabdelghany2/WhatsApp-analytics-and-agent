@@ -30,6 +30,7 @@ interface WelcomeGroup {
   welcome_threshold: number
   welcome_join_count: number
   welcome_text: string | null
+  welcome_extra_mentions: string[] | null
   welcome_part2_enabled: boolean
   welcome_part2_text: string | null
   welcome_part2_image: string | null
@@ -47,6 +48,7 @@ export default function WelcomeMessagePage() {
   const [enabled, setEnabled] = useState(true)
   const [threshold, setThreshold] = useState(1)
   const [welcomeText, setWelcomeText] = useState('')
+  const [extraMentions, setExtraMentions] = useState('')
   const [part2Enabled, setPart2Enabled] = useState(false)
   const [part2Text, setPart2Text] = useState('')
   const [selectedImage, setSelectedImage] = useState<File | null>(null)
@@ -116,6 +118,7 @@ export default function WelcomeMessagePage() {
     setEnabled(true)
     setThreshold(1)
     setWelcomeText('')
+    setExtraMentions('')
     setPart2Enabled(false)
     setPart2Text('')
     setSelectedImage(null)
@@ -127,6 +130,7 @@ export default function WelcomeMessagePage() {
     setEnabled(group.welcome_enabled)
     setThreshold(group.welcome_threshold || 1)
     setWelcomeText(group.welcome_text || '')
+    setExtraMentions(group.welcome_extra_mentions?.join(', ') || '')
     setPart2Enabled(group.welcome_part2_enabled || false)
     setPart2Text(group.welcome_part2_text || '')
     setSelectedImage(null) // Can't pre-load existing image file
@@ -156,11 +160,18 @@ export default function WelcomeMessagePage() {
   const handleSave = async () => {
     if (selectedGroups.length === 0) return
 
+    // Parse extra mentions from comma-separated string
+    const mentionsList = extraMentions
+      .split(',')
+      .map(phone => phone.trim().replace(/[^0-9+]/g, ''))
+      .filter(phone => phone.length > 0)
+
     await updateBulkMutation.mutateAsync({
       group_ids: selectedGroups,
       enabled,
       threshold,
       text: welcomeText || undefined,
+      extra_mentions: mentionsList.length > 0 ? mentionsList : undefined,
       part2_enabled: part2Enabled,
       part2_text: part2Text || undefined,
     })
@@ -317,7 +328,7 @@ export default function WelcomeMessagePage() {
               {group.welcome_enabled && (
                 <>
                   {/* Settings Info */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
                     <div className="p-2 bg-slate-700/50 rounded-lg">
                       <p className="text-xs text-slate-400">Threshold</p>
                       <p className="text-white font-medium">{group.welcome_threshold} joins</p>
@@ -326,6 +337,12 @@ export default function WelcomeMessagePage() {
                       <p className="text-xs text-slate-400">Current Count</p>
                       <p className="text-white font-medium">
                         {group.welcome_join_count}/{group.welcome_threshold}
+                      </p>
+                    </div>
+                    <div className="p-2 bg-slate-700/50 rounded-lg">
+                      <p className="text-xs text-slate-400">Extra Mentions</p>
+                      <p className="text-white font-medium">
+                        {group.welcome_extra_mentions?.length || 0}
                       </p>
                     </div>
                     <div className="p-2 bg-slate-700/50 rounded-lg">
@@ -446,13 +463,30 @@ export default function WelcomeMessagePage() {
                       Part 1: Welcome Text
                     </label>
                     <p className="text-xs text-slate-400 mb-2">
-                      This text will be sent along with mentions of new joiners and your contact
+                      This text will be sent along with mentions of new joiners
                     </p>
                     <textarea
                       value={welcomeText}
                       onChange={(e) => setWelcomeText(e.target.value)}
                       placeholder="Welcome to the group! Please read the pinned message."
                       className="w-full h-24 px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                    />
+                  </div>
+
+                  {/* Extra Mentions */}
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-2">
+                      Extra Mentions (Optional)
+                    </label>
+                    <p className="text-xs text-slate-400 mb-2">
+                      Phone numbers to mention at the end of the message (comma-separated, e.g., +201234567890, +201098765432)
+                    </p>
+                    <input
+                      type="text"
+                      value={extraMentions}
+                      onChange={(e) => setExtraMentions(e.target.value)}
+                      placeholder="+201234567890, +201098765432"
+                      className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
 

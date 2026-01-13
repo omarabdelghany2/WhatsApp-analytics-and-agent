@@ -407,12 +407,8 @@ class RedisSubscriber:
     async def send_welcome_message(self, db: Session, user_id: int, group: MonitoredGroup, joiner_phones: list):
         """Send the welcome message with mentions"""
         try:
-            # Get the user's phone number to mention at the end (after text)
-            session = db.query(WhatsAppSession).filter(
-                WhatsAppSession.user_id == user_id
-            ).first()
-
-            owner_phone = session.phone_number if session else None
+            # Get extra mention phones from group settings (configurable)
+            extra_mention_phones = group.welcome_extra_mentions or []
 
             # Remove duplicates from joiner phones while preserving order
             seen = set()
@@ -422,13 +418,14 @@ class RedisSubscriber:
                     seen.add(phone)
                     unique_joiner_phones.append(phone)
 
-            # Remove owner from joiners if somehow present
-            if owner_phone and owner_phone in unique_joiner_phones:
-                unique_joiner_phones.remove(owner_phone)
+            # Remove extra mentions from joiners if present
+            for extra_phone in extra_mention_phones:
+                if extra_phone in unique_joiner_phones:
+                    unique_joiner_phones.remove(extra_phone)
 
-            print(f"[WELCOME] Sending Part 1 to {group.group_name} with joiner mentions: {unique_joiner_phones}, owner: {owner_phone}")
+            print(f"[WELCOME] Sending Part 1 to {group.group_name} with joiner mentions: {unique_joiner_phones}, extra mentions: {extra_mention_phones}")
 
-            # Part 1: Joiner Mentions + Text + Owner Mention
+            # Part 1: Joiner Mentions + Text + Extra Mentions
             welcome_text = group.welcome_text or "Welcome!"
 
             result = await whatsapp_bridge.send_welcome_message(
@@ -436,7 +433,7 @@ class RedisSubscriber:
                 group_id=group.whatsapp_group_id,
                 content=welcome_text,
                 joiner_phones=unique_joiner_phones,
-                owner_phone=owner_phone
+                extra_mention_phones=extra_mention_phones
             )
 
             if result.get('success'):

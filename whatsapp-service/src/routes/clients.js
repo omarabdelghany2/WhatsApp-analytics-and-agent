@@ -182,13 +182,13 @@ module.exports = (clientManager) => {
         try {
             const userId = parseInt(req.params.userId);
             const groupId = req.params.groupId;
-            const { content, joinerPhones, ownerPhone } = req.body;
+            const { content, joinerPhones, extraMentionPhones } = req.body;
 
             if (!content) {
                 return res.status(400).json({ success: false, error: 'Message content is required' });
             }
 
-            const result = await clientManager.sendWelcomeMessage(userId, groupId, content, joinerPhones || [], ownerPhone);
+            const result = await clientManager.sendWelcomeMessage(userId, groupId, content, joinerPhones || [], extraMentionPhones || []);
             res.json(result);
         } catch (error) {
             console.error('Error sending welcome message:', error);

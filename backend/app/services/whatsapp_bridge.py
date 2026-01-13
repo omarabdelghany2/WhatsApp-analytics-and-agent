@@ -163,7 +163,7 @@ class WhatsAppBridge:
         group_id: str,
         content: str,
         joiner_phones: List[str],
-        owner_phone: Optional[str] = None
+        extra_mention_phones: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """Send a welcome message with clickable mentions by phone numbers"""
         async with httpx.AsyncClient() as client:
@@ -173,7 +173,7 @@ class WhatsAppBridge:
                     json={
                         "content": content,
                         "joinerPhones": joiner_phones,
-                        "ownerPhone": owner_phone
+                        "extraMentionPhones": extra_mention_phones or []
                     },
                     timeout=60.0
                 )

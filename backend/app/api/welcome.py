@@ -24,6 +24,7 @@ class WelcomeSettingsUpdate(BaseModel):
     enabled: bool
     threshold: int = 1  # Number of consecutive joins to trigger
     text: Optional[str] = None  # Part 1 text
+    extra_mentions: Optional[List[str]] = None  # Phone numbers to mention at end
     part2_enabled: bool = False
     part2_text: Optional[str] = None
     # part2_image is handled separately via upload
@@ -63,6 +64,7 @@ def get_all_welcome_settings(
                 "welcome_threshold": g.welcome_threshold or 1,
                 "welcome_join_count": g.welcome_join_count or 0,
                 "welcome_text": g.welcome_text,
+                "welcome_extra_mentions": g.welcome_extra_mentions or [],
                 "welcome_part2_enabled": g.welcome_part2_enabled or False,
                 "welcome_part2_text": g.welcome_part2_text,
                 "welcome_part2_image": g.welcome_part2_image
@@ -96,6 +98,7 @@ def get_welcome_settings(
         "welcome_join_count": group.welcome_join_count or 0,
         "welcome_pending_joiners": group.welcome_pending_joiners or [],
         "welcome_text": group.welcome_text,
+        "welcome_extra_mentions": group.welcome_extra_mentions or [],
         "welcome_part2_enabled": group.welcome_part2_enabled or False,
         "welcome_part2_text": group.welcome_part2_text,
         "welcome_part2_image": group.welcome_part2_image
@@ -130,6 +133,7 @@ def update_welcome_settings_bulk(
         group.welcome_enabled = request.enabled
         group.welcome_threshold = request.threshold
         group.welcome_text = request.text
+        group.welcome_extra_mentions = request.extra_mentions or []
         group.welcome_part2_enabled = request.part2_enabled
         group.welcome_part2_text = request.part2_text
         # Reset counters when settings change

@@ -691,7 +691,7 @@ class ClientManager {
         }
     }
 
-    async sendWelcomeMessage(userId, groupId, content, joinerPhones = [], ownerPhone = null) {
+    async sendWelcomeMessage(userId, groupId, content, joinerPhones = [], extraMentionPhones = []) {
         const client = this.clients.get(userId);
         if (!client || this.clientStatus.get(userId) !== 'ready') {
             throw new Error('Client not ready');
@@ -707,7 +707,7 @@ class ClientManager {
             // Build mentions array and contact list for clickable mentions
             const mentions = [];
             const joinerMentionNames = [];
-            let ownerMentionName = null;
+            const extraMentionNames = [];
 
             // Process joiner phones (will appear at the start)
             for (const phone of joinerPhones) {
@@ -730,23 +730,25 @@ class ClientManager {
                 }
             }
 
-            // Process owner phone (will appear at the end after text)
-            if (ownerPhone) {
-                const cleanOwnerPhone = ownerPhone.replace(/[^\d]/g, '');
-                const ownerContactId = `${cleanOwnerPhone}@c.us`;
+            // Process extra mention phones (will appear at the end after text)
+            for (const phone of extraMentionPhones) {
+                if (!phone) continue;
+
+                const cleanPhone = phone.replace(/[^\d]/g, '');
+                const contactId = `${cleanPhone}@c.us`;
 
                 try {
-                    const ownerContact = await client.getContactById(ownerContactId);
-                    mentions.push(ownerContact);
-                    ownerMentionName = `@${cleanOwnerPhone}`;
+                    const contact = await client.getContactById(contactId);
+                    mentions.push(contact);
+                    extraMentionNames.push(`@${cleanPhone}`);
                 } catch (e) {
-                    console.log(`[WELCOME] Could not get contact for owner ${ownerPhone}, adding raw ID`);
-                    mentions.push(ownerContactId);
-                    ownerMentionName = `@${cleanOwnerPhone}`;
+                    console.log(`[WELCOME] Could not get contact for extra mention ${phone}, adding raw ID`);
+                    mentions.push(contactId);
+                    extraMentionNames.push(`@${cleanPhone}`);
                 }
             }
 
-            // Build the message: @joiners + text + @owner
+            // Build the message: @joiners + text + @extraMentions
             let messageContent = '';
 
             // Add joiner mentions at the start
@@ -757,14 +759,14 @@ class ClientManager {
             // Add welcome text
             messageContent += content;
 
-            // Add owner mention at the end
-            if (ownerMentionName) {
-                messageContent += '\n\n' + ownerMentionName;
+            // Add extra mentions at the end
+            if (extraMentionNames.length > 0) {
+                messageContent += '\n\n' + extraMentionNames.join(' ');
             }
 
             const sendOptions = mentions.length > 0 ? { mentions } : {};
 
-            console.log(`[WELCOME] Sending welcome message to ${groupId} for user ${userId} with ${joinerMentionNames.length} joiner mentions and owner: ${ownerMentionName}`);
+            console.log(`[WELCOME] Sending welcome message to ${groupId} for user ${userId} with ${joinerMentionNames.length} joiner mentions and ${extraMentionNames.length} extra mentions`);
 
             const result = await chat.sendMessage(messageContent, sendOptions);
 
