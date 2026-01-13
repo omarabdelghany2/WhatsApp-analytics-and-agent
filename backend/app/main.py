@@ -1,5 +1,6 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from contextlib import asynccontextmanager
 import asyncio
 import redis.asyncio as redis
@@ -43,6 +44,9 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# Trust proxy headers (Railway uses X-Forwarded-Proto for HTTPS)
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])
 
 # CORS middleware
 app.add_middleware(
