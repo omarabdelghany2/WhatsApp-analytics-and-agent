@@ -3,7 +3,7 @@ import shutil
 import uuid
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, File, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
@@ -190,7 +190,7 @@ def update_welcome_settings(
 
 @router.post("/upload-image")
 async def upload_welcome_image(
-    group_ids: str,  # Comma-separated group IDs
+    group_ids: str = Form(...),  # Comma-separated group IDs
     image: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
