@@ -57,6 +57,7 @@ export default function WelcomeMessagePage() {
   const [threshold, setThreshold] = useState(1)
   const [welcomeText, setWelcomeText] = useState('')
   const [selectedMemberPhones, setSelectedMemberPhones] = useState<string[]>([])
+  const [manualPhoneInput, setManualPhoneInput] = useState('')
   const [currentWhatsappGroupId, setCurrentWhatsappGroupId] = useState<string | null>(null)
   const [part2Enabled, setPart2Enabled] = useState(false)
   const [part2Text, setPart2Text] = useState('')
@@ -135,6 +136,7 @@ export default function WelcomeMessagePage() {
     setThreshold(1)
     setWelcomeText('')
     setSelectedMemberPhones([])
+    setManualPhoneInput('')
     setCurrentWhatsappGroupId(null)
     setPart2Enabled(false)
     setPart2Text('')
@@ -148,6 +150,7 @@ export default function WelcomeMessagePage() {
     setThreshold(group.welcome_threshold || 1)
     setWelcomeText(group.welcome_text || '')
     setSelectedMemberPhones(group.welcome_extra_mentions || [])
+    setManualPhoneInput(group.welcome_extra_mentions?.join(', ') || '')
     setCurrentWhatsappGroupId(group.whatsapp_group_id)
     setPart2Enabled(group.welcome_part2_enabled || false)
     setPart2Text(group.welcome_part2_text || '')
@@ -199,12 +202,24 @@ export default function WelcomeMessagePage() {
   const handleSave = async () => {
     if (selectedGroups.length === 0) return
 
+    // Use member selector for single group, manual input for multiple groups
+    let mentionsList: string[] = []
+    if (selectedGroups.length === 1 && currentWhatsappGroupId) {
+      mentionsList = selectedMemberPhones
+    } else {
+      // Parse from manual input
+      mentionsList = manualPhoneInput
+        .split(',')
+        .map(phone => phone.trim().replace(/[^0-9+]/g, ''))
+        .filter(phone => phone.length > 0)
+    }
+
     await updateBulkMutation.mutateAsync({
       group_ids: selectedGroups,
       enabled,
       threshold,
       text: welcomeText || undefined,
-      extra_mentions: selectedMemberPhones.length > 0 ? selectedMemberPhones : undefined,
+      extra_mentions: mentionsList.length > 0 ? mentionsList : undefined,
       part2_enabled: part2Enabled,
       part2_text: part2Text || undefined,
     })
@@ -567,9 +582,20 @@ export default function WelcomeMessagePage() {
                         )}
                       </div>
                     ) : (
-                      <div className="p-4 bg-slate-700/30 rounded-lg text-center text-slate-400">
-                        <Users size={24} className="mx-auto mb-2 opacity-50" />
-                        <p className="text-sm">Select a single group to choose members</p>
+                      <div>
+                        <p className="text-xs text-slate-400 mb-2">
+                          Enter phone numbers manually (comma-separated, e.g., +201234567890, +201098765432)
+                        </p>
+                        <input
+                          type="text"
+                          value={manualPhoneInput}
+                          onChange={(e) => setManualPhoneInput(e.target.value)}
+                          placeholder="+201234567890, +201098765432"
+                          className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        <p className="text-xs text-slate-500 mt-2">
+                          Tip: Select a single group to pick members from a list
+                        </p>
                       </div>
                     )}
                   </div>
