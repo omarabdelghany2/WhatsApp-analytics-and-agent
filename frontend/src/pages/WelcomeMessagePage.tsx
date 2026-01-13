@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../services/api'
 import {
@@ -20,7 +20,15 @@ import {
   RefreshCw,
   Power,
   PowerOff,
+  UserPlus,
 } from 'lucide-react'
+
+interface GroupMember {
+  id: string
+  name: string
+  phone: string
+  isAdmin: boolean
+}
 
 interface WelcomeGroup {
   id: number
@@ -48,12 +56,20 @@ export default function WelcomeMessagePage() {
   const [enabled, setEnabled] = useState(true)
   const [threshold, setThreshold] = useState(1)
   const [welcomeText, setWelcomeText] = useState('')
-  const [extraMentions, setExtraMentions] = useState('')
+  const [selectedMemberPhones, setSelectedMemberPhones] = useState<string[]>([])
+  const [currentWhatsappGroupId, setCurrentWhatsappGroupId] = useState<string | null>(null)
   const [part2Enabled, setPart2Enabled] = useState(false)
   const [part2Text, setPart2Text] = useState('')
   const [selectedImage, setSelectedImage] = useState<File | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Fetch group members when editing a single group
+  const { data: membersData, isLoading: membersLoading } = useQuery({
+    queryKey: ['group-members', currentWhatsappGroupId],
+    queryFn: () => currentWhatsappGroupId ? api.getGroupMembers(currentWhatsappGroupId) : null,
+    enabled: !!currentWhatsappGroupId && selectedGroups.length === 1,
+  })
 
   // Fetch welcome settings
   const { data: welcomeData, isLoading, refetch } = useQuery({
@@ -118,7 +134,8 @@ export default function WelcomeMessagePage() {
     setEnabled(true)
     setThreshold(1)
     setWelcomeText('')
-    setExtraMentions('')
+    setSelectedMemberPhones([])
+    setCurrentWhatsappGroupId(null)
     setPart2Enabled(false)
     setPart2Text('')
     setSelectedImage(null)
@@ -130,11 +147,21 @@ export default function WelcomeMessagePage() {
     setEnabled(group.welcome_enabled)
     setThreshold(group.welcome_threshold || 1)
     setWelcomeText(group.welcome_text || '')
-    setExtraMentions(group.welcome_extra_mentions?.join(', ') || '')
+    setSelectedMemberPhones(group.welcome_extra_mentions || [])
+    setCurrentWhatsappGroupId(group.whatsapp_group_id)
     setPart2Enabled(group.welcome_part2_enabled || false)
     setPart2Text(group.welcome_part2_text || '')
     setSelectedImage(null) // Can't pre-load existing image file
     setShowConfigModal(true)
+  }
+
+  // Toggle member selection
+  const toggleMember = (phone: string) => {
+    setSelectedMemberPhones(prev =>
+      prev.includes(phone)
+        ? prev.filter(p => p !== phone)
+        : [...prev, phone]
+    )
   }
 
   // Handle group selection
@@ -160,18 +187,12 @@ export default function WelcomeMessagePage() {
   const handleSave = async () => {
     if (selectedGroups.length === 0) return
 
-    // Parse extra mentions from comma-separated string
-    const mentionsList = extraMentions
-      .split(',')
-      .map(phone => phone.trim().replace(/[^0-9+]/g, ''))
-      .filter(phone => phone.length > 0)
-
     await updateBulkMutation.mutateAsync({
       group_ids: selectedGroups,
       enabled,
       threshold,
       text: welcomeText || undefined,
-      extra_mentions: mentionsList.length > 0 ? mentionsList : undefined,
+      extra_mentions: selectedMemberPhones.length > 0 ? selectedMemberPhones : undefined,
       part2_enabled: part2Enabled,
       part2_text: part2Text || undefined,
     })
@@ -473,21 +494,72 @@ export default function WelcomeMessagePage() {
                     />
                   </div>
 
-                  {/* Extra Mentions */}
+                  {/* Extra Mentions - Member Selector */}
                   <div>
                     <label className="block text-sm font-medium text-slate-300 mb-2">
+                      <UserPlus size={16} className="inline mr-2" />
                       Extra Mentions (Optional)
                     </label>
                     <p className="text-xs text-slate-400 mb-2">
-                      Phone numbers to mention at the end of the message (comma-separated, e.g., +201234567890, +201098765432)
+                      Select members to mention at the end of the welcome message
                     </p>
-                    <input
-                      type="text"
-                      value={extraMentions}
-                      onChange={(e) => setExtraMentions(e.target.value)}
-                      placeholder="+201234567890, +201098765432"
-                      className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
+
+                    {selectedGroups.length === 1 && currentWhatsappGroupId ? (
+                      <div className="bg-slate-700/50 rounded-lg border border-slate-600 overflow-hidden">
+                        {membersLoading ? (
+                          <div className="p-4 text-center">
+                            <Loader2 size={20} className="animate-spin mx-auto text-blue-400" />
+                            <p className="text-sm text-slate-400 mt-2">Loading members...</p>
+                          </div>
+                        ) : membersData?.members && membersData.members.length > 0 ? (
+                          <div className="max-h-48 overflow-y-auto">
+                            {membersData.members.map((member) => (
+                              <button
+                                key={member.id}
+                                type="button"
+                                onClick={() => toggleMember(member.phone)}
+                                className="w-full p-3 flex items-center gap-3 hover:bg-slate-600/50 transition-colors text-left border-b border-slate-600 last:border-b-0"
+                              >
+                                {selectedMemberPhones.includes(member.phone) ? (
+                                  <CheckSquare size={18} className="text-blue-400 flex-shrink-0" />
+                                ) : (
+                                  <Square size={18} className="text-slate-500 flex-shrink-0" />
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-white text-sm truncate">
+                                    {member.name}
+                                    {member.isAdmin && (
+                                      <span className="ml-2 text-xs bg-yellow-500/20 text-yellow-400 px-1.5 py-0.5 rounded">
+                                        Admin
+                                      </span>
+                                    )}
+                                  </p>
+                                  <p className="text-xs text-slate-400">{member.phone}</p>
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="p-4 text-center text-slate-400">
+                            <Users size={24} className="mx-auto mb-2 opacity-50" />
+                            <p className="text-sm">No members found</p>
+                          </div>
+                        )}
+
+                        {selectedMemberPhones.length > 0 && (
+                          <div className="p-2 bg-slate-600/30 border-t border-slate-600">
+                            <p className="text-xs text-slate-400">
+                              {selectedMemberPhones.length} member(s) selected
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="p-4 bg-slate-700/30 rounded-lg text-center text-slate-400">
+                        <Users size={24} className="mx-auto mb-2 opacity-50" />
+                        <p className="text-sm">Select a single group to choose members</p>
+                      </div>
+                    )}
                   </div>
 
                   {/* Part 2 Toggle */}
