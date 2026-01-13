@@ -14,10 +14,12 @@ interface WebSocketMessage {
 
 const WebSocketContext = createContext<WebSocketContextType | undefined>(undefined)
 
-// Detect environment at runtime using current protocol
-const WS_URL = window.location.hostname === 'localhost'
-  ? 'ws://localhost:8000/ws'
-  : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//backend-production-d7e2.up.railway.app/ws`
+// WebSocket URL - uses env var or detects from current location
+const WS_URL = import.meta.env.VITE_WS_URL || (
+  window.location.hostname === 'localhost'
+    ? 'ws://localhost:8000/ws'
+    : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//backend-production-d7e2.up.railway.app/ws`
+)
 
 export function WebSocketProvider({ children }: { children: ReactNode }) {
   const [isConnected, setIsConnected] = useState(false)
