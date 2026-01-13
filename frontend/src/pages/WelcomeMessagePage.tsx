@@ -121,6 +121,18 @@ export default function WelcomeMessagePage() {
     setSelectedImage(null)
   }
 
+  // Edit a specific group - pre-populate form with its settings
+  const editGroup = (group: WelcomeGroup) => {
+    setSelectedGroups([group.id])
+    setEnabled(group.welcome_enabled)
+    setThreshold(group.welcome_threshold || 1)
+    setWelcomeText(group.welcome_text || '')
+    setPart2Enabled(group.welcome_part2_enabled || false)
+    setPart2Text(group.welcome_part2_text || '')
+    setSelectedImage(null) // Can't pre-load existing image file
+    setShowConfigModal(true)
+  }
+
   // Handle group selection
   const toggleGroup = (groupId: number) => {
     setSelectedGroups((prev) =>
@@ -272,6 +284,13 @@ export default function WelcomeMessagePage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => editGroup(group)}
+                    className="px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 transition-colors flex items-center gap-1 text-sm"
+                  >
+                    <Settings size={14} />
+                    Edit
+                  </button>
                   {group.welcome_enabled && group.welcome_join_count > 0 && (
                     <button
                       onClick={() => resetCounterMutation.mutate(group.id)}
