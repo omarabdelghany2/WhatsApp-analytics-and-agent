@@ -63,6 +63,12 @@ export default function WelcomeMessagePage() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // Fetch welcome settings - must be declared first as other hooks depend on it
+  const { data: welcomeData, isLoading, refetch } = useQuery({
+    queryKey: ['welcome-settings'],
+    queryFn: () => api.getWelcomeSettings(),
+  })
+
   // Get whatsapp group IDs for selected groups
   const selectedWhatsappGroupIds = useMemo(() => {
     if (!welcomeData?.groups) return []
@@ -118,12 +124,6 @@ export default function WelcomeMessagePage() {
     const common = allGroupMembers[0].filter(m => firstGroupPhones.has(m.phone))
     return { commonMembers: common, membersLoading: false }
   }, [membersQueries])
-
-  // Fetch welcome settings
-  const { data: welcomeData, isLoading, refetch } = useQuery({
-    queryKey: ['welcome-settings'],
-    queryFn: () => api.getWelcomeSettings(),
-  })
 
   // Bulk update mutation
   const updateBulkMutation = useMutation({
