@@ -166,11 +166,23 @@ export default function WelcomeMessagePage() {
 
   // Handle group selection
   const toggleGroup = (groupId: number) => {
-    setSelectedGroups((prev) =>
-      prev.includes(groupId)
+    setSelectedGroups((prev) => {
+      const newSelection = prev.includes(groupId)
         ? prev.filter((id) => id !== groupId)
         : [...prev, groupId]
-    )
+
+      // Update currentWhatsappGroupId when exactly one group is selected
+      if (newSelection.length === 1) {
+        const selectedGroup = welcomeData?.groups?.find(g => g.id === newSelection[0])
+        if (selectedGroup) {
+          setCurrentWhatsappGroupId(selectedGroup.whatsapp_group_id)
+        }
+      } else {
+        setCurrentWhatsappGroupId(null)
+      }
+
+      return newSelection
+    })
   }
 
   const selectAllGroups = () => {
