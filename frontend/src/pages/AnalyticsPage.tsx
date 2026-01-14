@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../services/api'
+import { useAdmin } from '../contexts/AdminContext'
 import { BarChart3, TrendingUp, Users, MessageSquare } from 'lucide-react'
 import {
   LineChart,
@@ -18,30 +19,40 @@ import {
 export default function AnalyticsPage() {
   const [days, setDays] = useState(30)
   const [selectedGroup, setSelectedGroup] = useState<number | undefined>()
+  const { viewingUser } = useAdmin()
+  const isAdminView = !!viewingUser
 
   const { data: groups } = useQuery({
-    queryKey: ['groups'],
-    queryFn: () => api.getGroups(),
+    queryKey: ['groups', isAdminView ? viewingUser?.id : 'self'],
+    queryFn: () => isAdminView ? api.getAdminUserGroups(viewingUser!.id) : api.getGroups(),
   })
 
   const { data: overview } = useQuery({
-    queryKey: ['overview', days, selectedGroup],
-    queryFn: () => api.getOverview(days, selectedGroup),
+    queryKey: ['overview', days, selectedGroup, isAdminView ? viewingUser?.id : 'self'],
+    queryFn: () => isAdminView
+      ? api.getAdminUserOverview(viewingUser!.id)
+      : api.getOverview(days, selectedGroup),
   })
 
   const { data: dailyStats } = useQuery({
-    queryKey: ['daily-stats', days, selectedGroup],
-    queryFn: () => api.getDailyStats(days, selectedGroup),
+    queryKey: ['daily-stats', days, selectedGroup, isAdminView ? viewingUser?.id : 'self'],
+    queryFn: () => isAdminView
+      ? api.getAdminUserDailyStats(viewingUser!.id, days, selectedGroup)
+      : api.getDailyStats(days, selectedGroup),
   })
 
   const { data: topSenders } = useQuery({
-    queryKey: ['top-senders', selectedGroup],
-    queryFn: () => api.getTopSenders(10, selectedGroup),
+    queryKey: ['top-senders', selectedGroup, isAdminView ? viewingUser?.id : 'self'],
+    queryFn: () => isAdminView
+      ? api.getAdminUserTopSenders(viewingUser!.id, 10, selectedGroup)
+      : api.getTopSenders(10, selectedGroup),
   })
 
   const { data: memberChanges } = useQuery({
-    queryKey: ['member-changes', days, selectedGroup],
-    queryFn: () => api.getMemberChanges(days, selectedGroup),
+    queryKey: ['member-changes', days, selectedGroup, isAdminView ? viewingUser?.id : 'self'],
+    queryFn: () => isAdminView
+      ? api.getAdminUserMemberChanges(viewingUser!.id, days, selectedGroup)
+      : api.getMemberChanges(days, selectedGroup),
   })
 
   return (

@@ -469,3 +469,129 @@ def get_admin_overview(
         "total_groups": total_groups,
         "total_certificates": total_certificates
     }
+
+
+@router.get("/users/{user_id}/stats/daily")
+def get_user_daily_stats(
+    user_id: int,
+    days: int = Query(default=30, le=90),
+    group_id: int = Query(None),
+    admin: User = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Get daily message counts for a specific user (admin only)"""
+    from datetime import date, timedelta
+    from sqlalchemy import func
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    end_date = date.today()
+    start_date = end_date - timedelta(days=days)
+
+    query = db.query(
+        func.date(Message.timestamp).label("date"),
+        func.count(Message.id).label("count")
+    ).filter(
+        Message.user_id == user_id,
+        func.date(Message.timestamp) >= start_date,
+        func.date(Message.timestamp) <= end_date
+    )
+
+    if group_id:
+        query = query.filter(Message.group_id == group_id)
+
+    results = query.group_by(func.date(Message.timestamp)).all()
+
+    return [{"date": row.date.isoformat(), "count": row.count} for row in results]
+
+
+@router.get("/users/{user_id}/stats/top-senders")
+def get_user_top_senders(
+    user_id: int,
+    limit: int = Query(default=10, le=50),
+    group_id: int = Query(None),
+    admin: User = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Get top message senders for a specific user (admin only)"""
+    from sqlalchemy import func
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    query = db.query(
+        Message.sender_name,
+        Message.sender_phone,
+        func.count(Message.id).label("message_count")
+    ).filter(
+        Message.user_id == user_id
+    )
+
+    if group_id:
+        query = query.filter(Message.group_id == group_id)
+
+    results = query.group_by(Message.sender_name, Message.sender_phone)\
+        .order_by(desc("message_count"))\
+        .limit(limit)\
+        .all()
+
+    return [
+        {
+            "sender_name": row.sender_name,
+            "sender_phone": row.sender_phone,
+            "message_count": row.message_count
+        }
+        for row in results
+    ]
+
+
+@router.get("/users/{user_id}/stats/member-changes")
+def get_user_member_changes(
+    user_id: int,
+    days: int = Query(default=30, le=90),
+    group_id: int = Query(None),
+    admin: User = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Get member join/leave trends for a specific user (admin only)"""
+    from datetime import date, timedelta
+    from sqlalchemy import func
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    end_date = date.today()
+    start_date = end_date - timedelta(days=days)
+
+    query = db.query(
+        Event.event_date,
+        Event.event_type,
+        func.count(Event.id).label("count")
+    ).filter(
+        Event.user_id == user_id,
+        Event.event_date >= start_date,
+        Event.event_date <= end_date,
+        Event.event_type.in_(["JOIN", "LEAVE"])
+    )
+
+    if group_id:
+        query = query.filter(Event.group_id == group_id)
+
+    results = query.group_by(Event.event_date, Event.event_type).all()
+
+    # Transform into daily data
+    daily_data = {}
+    for row in results:
+        date_str = row.event_date.isoformat()
+        if date_str not in daily_data:
+            daily_data[date_str] = {"date": date_str, "joins": 0, "leaves": 0}
+        if row.event_type == "JOIN":
+            daily_data[date_str]["joins"] = row.count
+        else:
+            daily_data[date_str]["leaves"] = row.count
+
+    return sorted(daily_data.values(), key=lambda x: x["date"])

@@ -439,6 +439,35 @@ class ApiClient {
     }>(`/api/admin/users/${userId}/stats/overview`)
   }
 
+  async getAdminUserDailyStats(userId: number, days?: number, groupId?: number) {
+    const searchParams = new URLSearchParams()
+    if (days) searchParams.append('days', days.toString())
+    if (groupId) searchParams.append('group_id', groupId.toString())
+    return this.request<Array<{ date: string; count: number }>>(
+      `/api/admin/users/${userId}/stats/daily?${searchParams}`
+    )
+  }
+
+  async getAdminUserTopSenders(userId: number, limit?: number, groupId?: number) {
+    const searchParams = new URLSearchParams()
+    if (limit) searchParams.append('limit', limit.toString())
+    if (groupId) searchParams.append('group_id', groupId.toString())
+    return this.request<Array<{
+      sender_name: string
+      sender_phone: string | null
+      message_count: number
+    }>>(`/api/admin/users/${userId}/stats/top-senders?${searchParams}`)
+  }
+
+  async getAdminUserMemberChanges(userId: number, days?: number, groupId?: number) {
+    const searchParams = new URLSearchParams()
+    if (days) searchParams.append('days', days.toString())
+    if (groupId) searchParams.append('group_id', groupId.toString())
+    return this.request<Array<{ date: string; joins: number; leaves: number }>>(
+      `/api/admin/users/${userId}/stats/member-changes?${searchParams}`
+    )
+  }
+
   async toggleUserAdmin(userId: number) {
     return this.request(`/api/admin/users/${userId}/admin`, { method: 'PUT' })
   }
