@@ -100,44 +100,44 @@ export default function CertificatesPage() {
 
   return (
     <div className="p-8">
-      <h1 className="text-2xl font-bold text-white mb-8">Certificates</h1>
+      <h1 className="text-2xl font-bold text-foreground mb-8">Certificates</h1>
 
       {/* Summary Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-        <div className="bg-slate-800 rounded-lg border border-slate-700 p-4">
+        <div className="bg-surface rounded-lg border border-border p-4">
           <div className="flex items-center gap-3">
             <div className="bg-amber-500/20 p-2 rounded-lg">
               <Award className="text-amber-500" size={20} />
             </div>
             <div>
-              <p className="text-slate-400 text-sm">Total Certificates</p>
-              <p className="text-xl font-bold text-white">{summary?.total_certificates || 0}</p>
+              <p className="text-muted text-sm">Total Certificates</p>
+              <p className="text-xl font-bold text-foreground">{summary?.total_certificates || 0}</p>
             </div>
           </div>
         </div>
 
-        <div className="bg-slate-800 rounded-lg border border-slate-700 p-4">
+        <div className="bg-surface rounded-lg border border-border p-4">
           <div className="flex items-center gap-3">
-            <div className="bg-blue-500/20 p-2 rounded-lg">
-              <Users className="text-blue-500" size={20} />
+            <div className="bg-primary/20 p-2 rounded-lg">
+              <Users className="text-primary" size={20} />
             </div>
             <div>
-              <p className="text-slate-400 text-sm">Unique Members</p>
-              <p className="text-xl font-bold text-white">{summary?.unique_members || 0}</p>
+              <p className="text-muted text-sm">Unique Members</p>
+              <p className="text-xl font-bold text-foreground">{summary?.unique_members || 0}</p>
             </div>
           </div>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="bg-slate-800 rounded-lg border border-slate-700 p-4 mb-6">
+      <div className="bg-surface rounded-lg border border-border p-4 mb-6">
         <div className="flex items-center gap-2 mb-4">
-          <Filter size={18} className="text-slate-400" />
-          <span className="text-white font-medium">Filters</span>
+          <Filter size={18} className="text-muted" />
+          <span className="text-foreground font-medium">Filters</span>
           <div className="ml-auto flex items-center gap-3">
             <button
               onClick={clearFilters}
-              className="text-sm text-blue-500 hover:text-blue-400"
+              className="text-sm text-primary hover:text-primary-hover"
             >
               Clear All
             </button>
@@ -161,11 +161,11 @@ export default function CertificatesPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Group */}
           <div>
-            <label className="block text-sm text-slate-400 mb-2">Group</label>
+            <label className="block text-sm text-muted mb-2">Group</label>
             <select
               value={filters.group_id || ''}
               onChange={e => handleFilterChange('group_id', e.target.value ? Number(e.target.value) : undefined)}
-              className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 bg-surface-secondary border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
             >
               <option value="">All Groups</option>
               {groups?.map(group => (
@@ -178,76 +178,76 @@ export default function CertificatesPage() {
 
           {/* Date From */}
           <div>
-            <label className="block text-sm text-slate-400 mb-2">From Date</label>
+            <label className="block text-sm text-muted mb-2">From Date</label>
             <input
               type="date"
               value={filters.date_from}
               onChange={e => handleFilterChange('date_from', e.target.value)}
-              className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 bg-surface-secondary border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
             />
           </div>
 
           {/* Date To */}
           <div>
-            <label className="block text-sm text-slate-400 mb-2">To Date</label>
+            <label className="block text-sm text-muted mb-2">To Date</label>
             <input
               type="date"
               value={filters.date_to}
               onChange={e => handleFilterChange('date_to', e.target.value)}
-              className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 bg-surface-secondary border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
             />
           </div>
 
           {/* Member Name */}
           <div>
-            <label className="block text-sm text-slate-400 mb-2">Member Name/Phone</label>
+            <label className="block text-sm text-muted mb-2">Member Name/Phone</label>
             <input
               type="text"
               value={filters.member_name}
               onChange={e => handleFilterChange('member_name', e.target.value)}
               placeholder="Search member..."
-              className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 bg-surface-secondary border border-border rounded-lg text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
             />
           </div>
         </div>
       </div>
 
       {/* Certificates Table */}
-      <div className="bg-slate-800 rounded-lg border border-slate-700">
-        <div className="p-4 border-b border-slate-700">
-          <h2 className="text-lg font-semibold text-white">
+      <div className="bg-surface rounded-lg border border-border">
+        <div className="p-4 border-b border-border">
+          <h2 className="text-lg font-semibold text-foreground">
             Certificate Summary ({filteredSummary.length} members)
           </h2>
         </div>
 
         {isLoading ? (
           <div className="p-8 text-center">
-            <Loader2 className="animate-spin mx-auto mb-4 text-slate-400" size={32} />
-            <p className="text-slate-400">Loading certificates...</p>
+            <Loader2 className="animate-spin mx-auto mb-4 text-muted" size={32} />
+            <p className="text-muted">Loading certificates...</p>
           </div>
         ) : filteredSummary.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-slate-700">
-                  <th className="text-left p-4 text-slate-400 font-medium">Member Name</th>
-                  <th className="text-left p-4 text-slate-400 font-medium">Phone Number</th>
-                  <th className="text-center p-4 text-slate-400 font-medium">Certificates</th>
-                  <th className="text-left p-4 text-slate-400 font-medium">Groups</th>
+                <tr className="border-b border-border">
+                  <th className="text-left p-4 text-muted font-medium">Member Name</th>
+                  <th className="text-left p-4 text-muted font-medium">Phone Number</th>
+                  <th className="text-center p-4 text-muted font-medium">Certificates</th>
+                  <th className="text-left p-4 text-muted font-medium">Groups</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-700">
+              <tbody className="divide-y divide-border">
                 {filteredSummary.map((item, index) => (
-                  <tr key={index} className="hover:bg-slate-700/50">
+                  <tr key={index} className="hover:bg-surface-secondary/50">
                     <td className="p-4">
                       <div className="flex items-center gap-3">
                         <div className="bg-amber-500/20 p-1.5 rounded-lg">
                           <Award className="text-amber-500" size={16} />
                         </div>
-                        <span className="text-white font-medium">{item.member_name}</span>
+                        <span className="text-foreground font-medium">{item.member_name}</span>
                       </div>
                     </td>
-                    <td className="p-4 text-slate-300">
+                    <td className="p-4 text-foreground-secondary">
                       {item.member_phone || '-'}
                     </td>
                     <td className="p-4 text-center">
@@ -255,7 +255,7 @@ export default function CertificatesPage() {
                         {item.certificate_count}
                       </span>
                     </td>
-                    <td className="p-4 text-slate-400 text-sm">
+                    <td className="p-4 text-muted text-sm">
                       {item.groups || '-'}
                     </td>
                   </tr>
@@ -264,7 +264,7 @@ export default function CertificatesPage() {
             </table>
           </div>
         ) : (
-          <div className="p-8 text-center text-slate-400">
+          <div className="p-8 text-center text-muted">
             <Award size={48} className="mx-auto mb-4 opacity-50" />
             <p>No certificates found</p>
             <p className="text-sm mt-2">

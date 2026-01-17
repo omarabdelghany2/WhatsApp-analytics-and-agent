@@ -196,6 +196,40 @@ module.exports = (clientManager) => {
         }
     });
 
+    // Send poll to a group
+    router.post('/:userId/groups/:groupId/send-poll', async (req, res) => {
+        try {
+            const userId = parseInt(req.params.userId);
+            const groupId = req.params.groupId;
+            const { question, options, allowMultipleAnswers } = req.body;
+
+            if (!question) {
+                return res.status(400).json({ success: false, error: 'Poll question is required' });
+            }
+
+            if (!options || !Array.isArray(options) || options.length < 2) {
+                return res.status(400).json({ success: false, error: 'Poll must have at least 2 options' });
+            }
+
+            if (options.length > 12) {
+                return res.status(400).json({ success: false, error: 'Poll cannot have more than 12 options' });
+            }
+
+            const result = await clientManager.sendPoll(
+                userId,
+                groupId,
+                question,
+                options,
+                allowMultipleAnswers || false
+            );
+
+            res.json(result);
+        } catch (error) {
+            console.error('Error sending poll:', error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
     // Logout/destroy client
     router.post('/:userId/logout', async (req, res) => {
         try {

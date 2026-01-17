@@ -1,4 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '../../contexts/AuthContext'
 import { useWebSocket } from '../../contexts/WebSocketContext'
 import {
@@ -17,35 +18,37 @@ import {
   UserPlus,
   Bot,
 } from 'lucide-react'
+import HeaderBar from './HeaderBar'
 
 export default function Layout() {
+  const { t } = useTranslation()
   const { user, logout } = useAuth()
   const { isConnected } = useWebSocket()
   const location = useLocation()
 
   const navItems = [
-    { path: '/', label: 'Dashboard', icon: LayoutDashboard },
-    { path: '/connect', label: 'WhatsApp', icon: LinkIcon },
-    { path: '/messages', label: 'Messages', icon: MessageSquare },
-    { path: '/events', label: 'Events', icon: Users },
-    { path: '/certificates', label: 'Certificates', icon: Award },
-    { path: '/analytics', label: 'Analytics', icon: BarChart3 },
-    { path: '/broadcast', label: 'Broadcast', icon: Send },
-    { path: '/group-settings', label: 'Group Settings', icon: Settings },
-    { path: '/welcome', label: 'Welcome Messages', icon: UserPlus },
-    { path: '/agents', label: 'AI Agent', icon: Bot },
+    { path: '/', labelKey: 'nav.dashboard', icon: LayoutDashboard },
+    { path: '/connect', labelKey: 'nav.whatsappConnect', icon: LinkIcon },
+    { path: '/messages', labelKey: 'nav.messages', icon: MessageSquare },
+    { path: '/events', labelKey: 'nav.events', icon: Users },
+    { path: '/certificates', labelKey: 'nav.certificates', icon: Award },
+    { path: '/analytics', labelKey: 'nav.analytics', icon: BarChart3 },
+    { path: '/broadcast', labelKey: 'nav.broadcast', icon: Send },
+    { path: '/group-settings', labelKey: 'nav.groupSettings', icon: Settings },
+    { path: '/welcome', labelKey: 'nav.welcomeMessages', icon: UserPlus },
+    { path: '/agents', labelKey: 'nav.agent', icon: Bot },
   ]
 
   if (user?.is_admin) {
-    navItems.push({ path: '/admin', label: 'Admin', icon: Shield })
+    navItems.push({ path: '/admin', labelKey: 'nav.admin', icon: Shield })
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 flex">
+    <div className="min-h-screen bg-background flex">
       {/* Sidebar */}
-      <aside className="w-64 bg-slate-800 border-r border-slate-700">
-        <div className="p-4 border-b border-slate-700">
-          <h1 className="text-xl font-bold text-white">WhatsApp Analytics</h1>
+      <aside className="w-64 bg-surface border-r border-border">
+        <div className="p-4 border-b border-border">
+          <h1 className="text-xl font-bold text-foreground">WhatsApp Analytics</h1>
         </div>
 
         <nav className="p-4 space-y-2">
@@ -59,27 +62,27 @@ export default function Layout() {
                 to={item.path}
                 className={`flex items-center gap-3 px-4 py-2 rounded-lg transition-colors ${
                   isActive
-                    ? 'bg-blue-600 text-white'
-                    : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                    ? 'bg-primary text-white'
+                    : 'text-foreground-secondary hover:bg-surface-secondary hover:text-foreground'
                 }`}
               >
                 <Icon size={20} />
-                <span>{item.label}</span>
+                <span>{t(item.labelKey)}</span>
               </Link>
             )
           })}
         </nav>
 
         {/* User info */}
-        <div className="absolute bottom-0 left-0 w-64 p-4 border-t border-slate-700 bg-slate-800">
+        <div className="absolute bottom-0 left-0 w-64 p-4 border-t border-border bg-surface">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
+              <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center text-white text-sm font-medium">
                 {user?.username?.charAt(0).toUpperCase()}
               </div>
               <div>
-                <p className="text-sm text-white font-medium">{user?.username}</p>
-                <p className="text-xs text-slate-400">{user?.email}</p>
+                <p className="text-sm text-foreground font-medium">{user?.username}</p>
+                <p className="text-xs text-muted">{user?.email}</p>
               </div>
             </div>
           </div>
@@ -87,29 +90,32 @@ export default function Layout() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               {isConnected ? (
-                <Wifi size={16} className="text-green-500" />
+                <Wifi size={16} className="text-success" />
               ) : (
-                <WifiOff size={16} className="text-red-500" />
+                <WifiOff size={16} className="text-error" />
               )}
-              <span className="text-xs text-slate-400">
-                {isConnected ? 'Connected' : 'Disconnected'}
+              <span className="text-xs text-muted">
+                {isConnected ? t('status.connected') : t('status.disconnected')}
               </span>
             </div>
 
             <button
               onClick={logout}
-              className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors"
+              className="flex items-center gap-2 text-muted hover:text-foreground transition-colors"
             >
               <LogOut size={16} />
-              <span className="text-sm">Logout</span>
+              <span className="text-sm">{t('nav.logout')}</span>
             </button>
           </div>
         </div>
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-auto">
-        <Outlet />
+      <main className="flex-1 overflow-auto flex flex-col">
+        <HeaderBar />
+        <div className="flex-1 overflow-auto">
+          <Outlet />
+        </div>
       </main>
     </div>
   )

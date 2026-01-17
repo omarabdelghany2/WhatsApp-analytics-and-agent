@@ -6,6 +6,8 @@ import App from './App'
 import { AuthProvider } from './contexts/AuthContext'
 import { WebSocketProvider } from './contexts/WebSocketContext'
 import { AdminProvider } from './contexts/AdminContext'
+import { ThemeProvider } from './contexts/ThemeContext'
+import './i18n'
 import './index.css'
 
 const queryClient = new QueryClient({
@@ -20,15 +22,17 @@ const queryClient = new QueryClient({
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <AuthProvider>
-          <AdminProvider>
-            <WebSocketProvider>
-              <App />
-            </WebSocketProvider>
-          </AdminProvider>
-        </AuthProvider>
-      </BrowserRouter>
+      <ThemeProvider>
+        <BrowserRouter>
+          <AuthProvider>
+            <AdminProvider>
+              <WebSocketProvider>
+                <App />
+              </WebSocketProvider>
+            </AdminProvider>
+          </AuthProvider>
+        </BrowserRouter>
+      </ThemeProvider>
     </QueryClientProvider>
   </React.StrictMode>,
 )

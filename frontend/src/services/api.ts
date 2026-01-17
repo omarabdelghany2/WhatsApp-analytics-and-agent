@@ -693,6 +693,24 @@ class ApiClient {
     return response.json()
   }
 
+  async sendPollBroadcast(data: {
+    question: string
+    options: string[]
+    allow_multiple_answers: boolean
+    group_ids: number[]
+  }) {
+    return this.request<{
+      success: boolean
+      groups_sent: number
+      groups_failed: number
+      group_names: string[]
+      error_message: string | null
+    }>('/api/broadcast/send-poll', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  }
+
   async getScheduledMessages() {
     return this.request<Array<{
       id: number

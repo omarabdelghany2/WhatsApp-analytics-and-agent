@@ -268,8 +268,8 @@ export default function WelcomeMessagePage() {
     <div className="p-6 max-w-6xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-white">Welcome Messages</h1>
-          <p className="text-slate-400 mt-1">
+          <h1 className="text-2xl font-bold text-foreground">Welcome Messages</h1>
+          <p className="text-muted mt-1">
             Automatically welcome new members when they join groups
           </p>
         </div>
@@ -290,7 +290,7 @@ export default function WelcomeMessagePage() {
           )}
           <button
             onClick={() => setShowConfigModal(true)}
-            className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-2"
+            className="px-4 py-2 bg-primary text-foreground rounded-lg hover:bg-primary-hover transition-colors flex items-center gap-2"
           >
             <Settings size={16} />
             Configure
@@ -300,33 +300,33 @@ export default function WelcomeMessagePage() {
 
       {/* Stats Summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-slate-800 rounded-lg p-4">
-          <div className="flex items-center gap-2 text-slate-400 mb-1">
+        <div className="bg-surface rounded-lg p-4">
+          <div className="flex items-center gap-2 text-muted mb-1">
             <Users size={16} />
             <span className="text-sm">Total Groups</span>
           </div>
-          <p className="text-2xl font-bold text-white">{totalGroups}</p>
+          <p className="text-2xl font-bold text-foreground">{totalGroups}</p>
         </div>
-        <div className="bg-slate-800 rounded-lg p-4">
+        <div className="bg-surface rounded-lg p-4">
           <div className="flex items-center gap-2 text-green-400 mb-1">
             <Power size={16} />
             <span className="text-sm">Enabled</span>
           </div>
-          <p className="text-2xl font-bold text-white">{enabledCount}</p>
+          <p className="text-2xl font-bold text-foreground">{enabledCount}</p>
         </div>
-        <div className="bg-slate-800 rounded-lg p-4">
-          <div className="flex items-center gap-2 text-slate-400 mb-1">
+        <div className="bg-surface rounded-lg p-4">
+          <div className="flex items-center gap-2 text-muted mb-1">
             <PowerOff size={16} />
             <span className="text-sm">Disabled</span>
           </div>
-          <p className="text-2xl font-bold text-white">{totalGroups - enabledCount}</p>
+          <p className="text-2xl font-bold text-foreground">{totalGroups - enabledCount}</p>
         </div>
-        <div className="bg-slate-800 rounded-lg p-4">
-          <div className="flex items-center gap-2 text-blue-400 mb-1">
+        <div className="bg-surface rounded-lg p-4">
+          <div className="flex items-center gap-2 text-primary mb-1">
             <MessageSquare size={16} />
             <span className="text-sm">Pending Joins</span>
           </div>
-          <p className="text-2xl font-bold text-white">
+          <p className="text-2xl font-bold text-foreground">
             {welcomeData?.groups?.reduce((sum, g) => sum + g.welcome_join_count, 0) || 0}
           </p>
         </div>
@@ -334,29 +334,29 @@ export default function WelcomeMessagePage() {
 
       {/* Groups List */}
       {isLoading ? (
-        <div className="bg-slate-800 rounded-lg p-12 text-center">
-          <Loader2 size={48} className="mx-auto mb-4 text-blue-400 animate-spin" />
-          <p className="text-slate-400">Loading welcome settings...</p>
+        <div className="bg-surface rounded-lg p-12 text-center">
+          <Loader2 size={48} className="mx-auto mb-4 text-primary animate-spin" />
+          <p className="text-muted">Loading welcome settings...</p>
         </div>
       ) : welcomeData?.groups && welcomeData.groups.length > 0 ? (
         <div className="space-y-4">
           {welcomeData.groups.map((group) => (
             <div
               key={group.id}
-              className="bg-slate-800 rounded-lg p-4"
+              className="bg-surface rounded-lg p-4"
             >
               <div className="flex items-start justify-between gap-4 mb-3">
                 <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-lg ${group.welcome_enabled ? 'bg-green-500/20' : 'bg-slate-700'}`}>
+                  <div className={`p-2 rounded-lg ${group.welcome_enabled ? 'bg-green-500/20' : 'bg-surface-secondary'}`}>
                     {group.welcome_enabled ? (
                       <Power size={20} className="text-green-400" />
                     ) : (
-                      <PowerOff size={20} className="text-slate-400" />
+                      <PowerOff size={20} className="text-muted" />
                     )}
                   </div>
                   <div>
-                    <h3 className="text-white font-medium">{group.group_name}</h3>
-                    <p className="text-sm text-slate-400">
+                    <h3 className="text-foreground font-medium">{group.group_name}</h3>
+                    <p className="text-sm text-muted">
                       {group.welcome_enabled ? 'Welcome message enabled' : 'Disabled'}
                     </p>
                   </div>
@@ -364,7 +364,7 @@ export default function WelcomeMessagePage() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => editGroup(group)}
-                    className="px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 transition-colors flex items-center gap-1 text-sm"
+                    className="px-3 py-1.5 bg-primary/20 text-primary rounded-lg hover:bg-primary/30 transition-colors flex items-center gap-1 text-sm"
                   >
                     <Settings size={14} />
                     Edit
@@ -373,7 +373,7 @@ export default function WelcomeMessagePage() {
                     <button
                       onClick={() => resetCounterMutation.mutate(group.id)}
                       disabled={resetCounterMutation.isPending}
-                      className="px-3 py-1.5 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition-colors flex items-center gap-1 text-sm"
+                      className="px-3 py-1.5 bg-surface-secondary text-foreground-secondary rounded-lg hover:bg-surface-secondary/80 transition-colors flex items-center gap-1 text-sm"
                     >
                       <RefreshCw size={14} />
                       Reset
@@ -396,31 +396,31 @@ export default function WelcomeMessagePage() {
                 <>
                   {/* Settings Info */}
                   <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
-                    <div className="p-2 bg-slate-700/50 rounded-lg">
-                      <p className="text-xs text-slate-400">Threshold</p>
-                      <p className="text-white font-medium">{group.welcome_threshold} joins</p>
+                    <div className="p-2 bg-surface-secondary/50 rounded-lg">
+                      <p className="text-xs text-muted">Threshold</p>
+                      <p className="text-foreground font-medium">{group.welcome_threshold} joins</p>
                     </div>
-                    <div className="p-2 bg-slate-700/50 rounded-lg">
-                      <p className="text-xs text-slate-400">Current Count</p>
-                      <p className="text-white font-medium">
+                    <div className="p-2 bg-surface-secondary/50 rounded-lg">
+                      <p className="text-xs text-muted">Current Count</p>
+                      <p className="text-foreground font-medium">
                         {group.welcome_join_count}/{group.welcome_threshold}
                       </p>
                     </div>
-                    <div className="p-2 bg-slate-700/50 rounded-lg">
-                      <p className="text-xs text-slate-400">Extra Mentions</p>
-                      <p className="text-white font-medium">
+                    <div className="p-2 bg-surface-secondary/50 rounded-lg">
+                      <p className="text-xs text-muted">Extra Mentions</p>
+                      <p className="text-foreground font-medium">
                         {group.welcome_extra_mentions?.length || 0}
                       </p>
                     </div>
-                    <div className="p-2 bg-slate-700/50 rounded-lg">
-                      <p className="text-xs text-slate-400">Part 2</p>
-                      <p className="text-white font-medium">
+                    <div className="p-2 bg-surface-secondary/50 rounded-lg">
+                      <p className="text-xs text-muted">Part 2</p>
+                      <p className="text-foreground font-medium">
                         {group.welcome_part2_enabled ? 'Enabled' : 'Disabled'}
                       </p>
                     </div>
-                    <div className="p-2 bg-slate-700/50 rounded-lg">
-                      <p className="text-xs text-slate-400">Image</p>
-                      <p className="text-white font-medium flex items-center gap-1">
+                    <div className="p-2 bg-surface-secondary/50 rounded-lg">
+                      <p className="text-xs text-muted">Image</p>
+                      <p className="text-foreground font-medium flex items-center gap-1">
                         {group.welcome_part2_image ? (
                           <>
                             <ImageIcon size={14} className="text-green-400" />
@@ -435,17 +435,17 @@ export default function WelcomeMessagePage() {
 
                   {/* Welcome Text Preview */}
                   {group.welcome_text && (
-                    <div className="p-3 bg-slate-700/30 rounded-lg">
-                      <p className="text-xs text-slate-400 mb-1">Welcome Text (Part 1)</p>
-                      <p className="text-slate-300 text-sm">{group.welcome_text}</p>
+                    <div className="p-3 bg-surface-secondary/30 rounded-lg">
+                      <p className="text-xs text-muted mb-1">Welcome Text (Part 1)</p>
+                      <p className="text-foreground-secondary text-sm">{group.welcome_text}</p>
                     </div>
                   )}
 
                   {/* Part 2 Text Preview */}
                   {group.welcome_part2_enabled && group.welcome_part2_text && (
-                    <div className="mt-2 p-3 bg-slate-700/30 rounded-lg">
-                      <p className="text-xs text-slate-400 mb-1">Part 2 Text</p>
-                      <p className="text-slate-300 text-sm">{group.welcome_part2_text}</p>
+                    <div className="mt-2 p-3 bg-surface-secondary/30 rounded-lg">
+                      <p className="text-xs text-muted mb-1">Part 2 Text</p>
+                      <p className="text-foreground-secondary text-sm">{group.welcome_part2_text}</p>
                     </div>
                   )}
                 </>
@@ -454,12 +454,12 @@ export default function WelcomeMessagePage() {
           ))}
         </div>
       ) : (
-        <div className="bg-slate-800 rounded-lg p-12 text-center">
-          <MessageSquare size={48} className="mx-auto mb-4 text-slate-600" />
-          <h3 className="text-lg font-medium text-slate-300 mb-2">
+        <div className="bg-surface rounded-lg p-12 text-center">
+          <MessageSquare size={48} className="mx-auto mb-4 text-muted" />
+          <h3 className="text-lg font-medium text-foreground-secondary mb-2">
             No Groups Found
           </h3>
-          <p className="text-slate-500">
+          <p className="text-muted">
             Add groups to your monitored list first.
           </p>
         </div>
@@ -468,31 +468,31 @@ export default function WelcomeMessagePage() {
       {/* Configuration Modal */}
       {showConfigModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-lg border border-slate-700 w-full max-w-2xl max-h-[90vh] flex flex-col">
-            <div className="p-4 border-b border-slate-700 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-white">Configure Welcome Message</h2>
+          <div className="bg-surface rounded-lg border border-border w-full max-w-2xl max-h-[90vh] flex flex-col">
+            <div className="p-4 border-b border-border flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-foreground">Configure Welcome Message</h2>
               <button
                 onClick={() => { setShowConfigModal(false); resetForm() }}
-                className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+                className="p-2 hover:bg-surface-secondary rounded-lg transition-colors"
               >
-                <X size={20} className="text-slate-400" />
+                <X size={20} className="text-muted" />
               </button>
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {/* Enable/Disable Toggle */}
-              <div className="bg-slate-700/50 rounded-lg p-4">
+              <div className="bg-surface-secondary/50 rounded-lg p-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="font-medium text-white">Enable Welcome Messages</h3>
-                    <p className="text-sm text-slate-400">
+                    <h3 className="font-medium text-foreground">Enable Welcome Messages</h3>
+                    <p className="text-sm text-muted">
                       Automatically send welcome messages when members join
                     </p>
                   </div>
                   <button
                     onClick={() => setEnabled(!enabled)}
                     className={`w-14 h-8 rounded-full transition-colors ${
-                      enabled ? 'bg-green-500' : 'bg-slate-600'
+                      enabled ? 'bg-green-500' : 'bg-surface-secondary'
                     }`}
                   >
                     <div
@@ -508,10 +508,10 @@ export default function WelcomeMessagePage() {
                 <>
                   {/* Threshold */}
                   <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">
+                    <label className="block text-sm font-medium text-foreground-secondary mb-2">
                       Join Threshold
                     </label>
-                    <p className="text-xs text-slate-400 mb-2">
+                    <p className="text-xs text-muted mb-2">
                       Number of consecutive joins before sending welcome message
                     </p>
                     <input
@@ -520,44 +520,44 @@ export default function WelcomeMessagePage() {
                       max="100"
                       value={threshold}
                       onChange={(e) => setThreshold(parseInt(e.target.value) || 1)}
-                      className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-4 py-2 bg-surface-secondary border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                     />
                   </div>
 
                   {/* Part 1: Welcome Text */}
                   <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">
+                    <label className="block text-sm font-medium text-foreground-secondary mb-2">
                       Part 1: Welcome Text
                     </label>
-                    <p className="text-xs text-slate-400 mb-2">
+                    <p className="text-xs text-muted mb-2">
                       This text will be sent along with mentions of new joiners
                     </p>
                     <textarea
                       value={welcomeText}
                       onChange={(e) => setWelcomeText(e.target.value)}
                       placeholder="Welcome to the group! Please read the pinned message."
-                      className="w-full h-24 px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                      className="w-full h-24 px-4 py-3 bg-surface-secondary border border-border rounded-lg text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary resize-none"
                     />
                   </div>
 
                   {/* Extra Mentions - Member Selector */}
                   <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">
+                    <label className="block text-sm font-medium text-foreground-secondary mb-2">
                       <UserPlus size={16} className="inline mr-2" />
                       Extra Mentions (Optional)
                     </label>
-                    <p className="text-xs text-slate-400 mb-2">
+                    <p className="text-xs text-muted mb-2">
                       {selectedGroups.length > 1
                         ? `Select common members across ${selectedGroups.length} groups to mention`
                         : 'Select members to mention at the end of the welcome message'}
                     </p>
 
                     {selectedGroups.length > 0 ? (
-                      <div className="bg-slate-700/50 rounded-lg border border-slate-600 overflow-hidden">
+                      <div className="bg-surface-secondary/50 rounded-lg border border-border overflow-hidden">
                         {membersLoading ? (
                           <div className="p-4 text-center">
-                            <Loader2 size={20} className="animate-spin mx-auto text-blue-400" />
-                            <p className="text-sm text-slate-400 mt-2">Loading members...</p>
+                            <Loader2 size={20} className="animate-spin mx-auto text-primary" />
+                            <p className="text-sm text-muted mt-2">Loading members...</p>
                           </div>
                         ) : commonMembers.length > 0 ? (
                           <div className="max-h-48 overflow-y-auto">
@@ -566,15 +566,15 @@ export default function WelcomeMessagePage() {
                                 key={member.id}
                                 type="button"
                                 onClick={() => toggleMember(member.phone)}
-                                className="w-full p-3 flex items-center gap-3 hover:bg-slate-600/50 transition-colors text-left border-b border-slate-600 last:border-b-0"
+                                className="w-full p-3 flex items-center gap-3 hover:bg-surface-secondary/80/50 transition-colors text-left border-b border-border last:border-b-0"
                               >
                                 {selectedMemberPhones.includes(member.phone) ? (
-                                  <CheckSquare size={18} className="text-blue-400 flex-shrink-0" />
+                                  <CheckSquare size={18} className="text-primary flex-shrink-0" />
                                 ) : (
-                                  <Square size={18} className="text-slate-500 flex-shrink-0" />
+                                  <Square size={18} className="text-muted flex-shrink-0" />
                                 )}
                                 <div className="flex-1 min-w-0">
-                                  <p className="text-white text-sm truncate">
+                                  <p className="text-foreground text-sm truncate">
                                     {member.name}
                                     {member.isAdmin && (
                                       <span className="ml-2 text-xs bg-yellow-500/20 text-yellow-400 px-1.5 py-0.5 rounded">
@@ -582,13 +582,13 @@ export default function WelcomeMessagePage() {
                                       </span>
                                     )}
                                   </p>
-                                  <p className="text-xs text-slate-400">{member.phone}</p>
+                                  <p className="text-xs text-muted">{member.phone}</p>
                                 </div>
                               </button>
                             ))}
                           </div>
                         ) : (
-                          <div className="p-4 text-center text-slate-400">
+                          <div className="p-4 text-center text-muted">
                             <Users size={24} className="mx-auto mb-2 opacity-50" />
                             <p className="text-sm">
                               {selectedGroups.length > 1
@@ -599,15 +599,15 @@ export default function WelcomeMessagePage() {
                         )}
 
                         {selectedMemberPhones.length > 0 && (
-                          <div className="p-2 bg-slate-600/30 border-t border-slate-600">
-                            <p className="text-xs text-slate-400">
+                          <div className="p-2 bg-surface-secondary/30 border-t border-border">
+                            <p className="text-xs text-muted">
                               {selectedMemberPhones.length} member(s) selected
                             </p>
                           </div>
                         )}
                       </div>
                     ) : (
-                      <div className="p-4 bg-slate-700/30 rounded-lg text-center text-slate-400">
+                      <div className="p-4 bg-surface-secondary/30 rounded-lg text-center text-muted">
                         <Users size={24} className="mx-auto mb-2 opacity-50" />
                         <p className="text-sm">Select groups to see available members</p>
                       </div>
@@ -615,18 +615,18 @@ export default function WelcomeMessagePage() {
                   </div>
 
                   {/* Part 2 Toggle */}
-                  <div className="bg-slate-700/50 rounded-lg p-4">
+                  <div className="bg-surface-secondary/50 rounded-lg p-4">
                     <div className="flex items-center justify-between">
                       <div>
-                        <h3 className="font-medium text-white">Enable Part 2</h3>
-                        <p className="text-sm text-slate-400">
+                        <h3 className="font-medium text-foreground">Enable Part 2</h3>
+                        <p className="text-sm text-muted">
                           Send a second message with text and/or image
                         </p>
                       </div>
                       <button
                         onClick={() => setPart2Enabled(!part2Enabled)}
                         className={`w-14 h-8 rounded-full transition-colors ${
-                          part2Enabled ? 'bg-green-500' : 'bg-slate-600'
+                          part2Enabled ? 'bg-green-500' : 'bg-surface-secondary'
                         }`}
                       >
                         <div
@@ -642,20 +642,20 @@ export default function WelcomeMessagePage() {
                     <>
                       {/* Part 2: Text */}
                       <div>
-                        <label className="block text-sm font-medium text-slate-300 mb-2">
+                        <label className="block text-sm font-medium text-foreground-secondary mb-2">
                           Part 2: Text (Optional)
                         </label>
                         <textarea
                           value={part2Text}
                           onChange={(e) => setPart2Text(e.target.value)}
                           placeholder="Additional information..."
-                          className="w-full h-20 px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                          className="w-full h-20 px-4 py-3 bg-surface-secondary border border-border rounded-lg text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary resize-none"
                         />
                       </div>
 
                       {/* Part 2: Image */}
                       <div>
-                        <label className="block text-sm font-medium text-slate-300 mb-2">
+                        <label className="block text-sm font-medium text-foreground-secondary mb-2">
                           Part 2: Image (Optional)
                         </label>
                         <input
@@ -667,7 +667,7 @@ export default function WelcomeMessagePage() {
                         />
                         <button
                           onClick={() => fileInputRef.current?.click()}
-                          className="w-full py-4 bg-slate-700 border-2 border-dashed border-slate-600 rounded-lg hover:border-blue-500 transition-colors flex items-center justify-center gap-2 text-slate-300 hover:text-white"
+                          className="w-full py-4 bg-surface-secondary border-2 border-dashed border-border rounded-lg hover:border-primary transition-colors flex items-center justify-center gap-2 text-foreground-secondary hover:text-foreground"
                         >
                           {selectedImage ? (
                             <>
@@ -696,39 +696,39 @@ export default function WelcomeMessagePage() {
               )}
 
               {/* Group Selector */}
-              <div className="bg-slate-700/50 rounded-lg overflow-hidden">
+              <div className="bg-surface-secondary/50 rounded-lg overflow-hidden">
                 <div
-                  className="p-4 border-b border-slate-600 flex items-center justify-between cursor-pointer"
+                  className="p-4 border-b border-border flex items-center justify-between cursor-pointer"
                   onClick={() => setGroupsExpanded(!groupsExpanded)}
                 >
                   <div>
-                    <h3 className="font-medium text-white flex items-center gap-2">
+                    <h3 className="font-medium text-foreground flex items-center gap-2">
                       <Users size={18} />
                       Apply to Groups
                     </h3>
-                    <p className="text-sm text-slate-400 mt-1">
+                    <p className="text-sm text-muted mt-1">
                       {selectedGroups.length} of {welcomeData?.groups?.length || 0} selected
                     </p>
                   </div>
                   {groupsExpanded ? (
-                    <ChevronUp size={20} className="text-slate-400" />
+                    <ChevronUp size={20} className="text-muted" />
                   ) : (
-                    <ChevronDown size={20} className="text-slate-400" />
+                    <ChevronDown size={20} className="text-muted" />
                   )}
                 </div>
 
                 {groupsExpanded && (
                   <>
-                    <div className="p-3 border-b border-slate-600 flex gap-2">
+                    <div className="p-3 border-b border-border flex gap-2">
                       <button
                         onClick={(e) => { e.stopPropagation(); selectAllGroups() }}
-                        className="flex-1 py-1.5 text-sm bg-slate-600 text-slate-300 rounded hover:bg-slate-500 transition-colors"
+                        className="flex-1 py-1.5 text-sm bg-surface-secondary text-foreground-secondary rounded hover:bg-surface-secondary transition-colors"
                       >
                         Select All
                       </button>
                       <button
                         onClick={(e) => { e.stopPropagation(); deselectAllGroups() }}
-                        className="flex-1 py-1.5 text-sm bg-slate-600 text-slate-300 rounded hover:bg-slate-500 transition-colors"
+                        className="flex-1 py-1.5 text-sm bg-surface-secondary text-foreground-secondary rounded hover:bg-surface-secondary transition-colors"
                       >
                         Deselect All
                       </button>
@@ -736,21 +736,21 @@ export default function WelcomeMessagePage() {
 
                     <div className="max-h-48 overflow-y-auto">
                       {welcomeData?.groups && welcomeData.groups.length > 0 ? (
-                        <div className="divide-y divide-slate-600">
+                        <div className="divide-y divide-border">
                           {welcomeData.groups.map((group) => (
                             <button
                               key={group.id}
                               onClick={() => toggleGroup(group.id)}
-                              className="w-full p-3 flex items-center gap-3 hover:bg-slate-600/50 transition-colors text-left"
+                              className="w-full p-3 flex items-center gap-3 hover:bg-surface-secondary/80/50 transition-colors text-left"
                             >
                               {selectedGroups.includes(group.id) ? (
-                                <CheckSquare size={20} className="text-blue-400 flex-shrink-0" />
+                                <CheckSquare size={20} className="text-primary flex-shrink-0" />
                               ) : (
-                                <Square size={20} className="text-slate-500 flex-shrink-0" />
+                                <Square size={20} className="text-muted flex-shrink-0" />
                               )}
                               <div className="flex-1 min-w-0">
-                                <p className="text-white truncate">{group.group_name}</p>
-                                <p className="text-xs text-slate-400">
+                                <p className="text-foreground truncate">{group.group_name}</p>
+                                <p className="text-xs text-muted">
                                   {group.welcome_enabled ? 'Currently enabled' : 'Currently disabled'}
                                 </p>
                               </div>
@@ -758,7 +758,7 @@ export default function WelcomeMessagePage() {
                           ))}
                         </div>
                       ) : (
-                        <div className="p-8 text-center text-slate-400">
+                        <div className="p-8 text-center text-muted">
                           <Users size={32} className="mx-auto mb-2 opacity-50" />
                           <p>No groups available</p>
                         </div>
@@ -769,21 +769,21 @@ export default function WelcomeMessagePage() {
               </div>
             </div>
 
-            <div className="p-4 border-t border-slate-700 flex items-center justify-between">
-              <p className="text-sm text-slate-400">
+            <div className="p-4 border-t border-border flex items-center justify-between">
+              <p className="text-sm text-muted">
                 {selectedGroups.length} groups selected
               </p>
               <div className="flex gap-3">
                 <button
                   onClick={() => { setShowConfigModal(false); resetForm() }}
-                  className="px-4 py-2 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition-colors"
+                  className="px-4 py-2 bg-surface-secondary text-foreground-secondary rounded-lg hover:bg-surface-secondary/80 transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleSave}
                   disabled={selectedGroups.length === 0 || updateBulkMutation.isPending || uploadImageMutation.isPending}
-                  className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                  className="px-4 py-2 bg-primary text-foreground rounded-lg hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
                 >
                   {(updateBulkMutation.isPending || uploadImageMutation.isPending) && (
                     <Loader2 size={16} className="animate-spin" />

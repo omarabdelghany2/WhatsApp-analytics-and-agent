@@ -1,4 +1,4 @@
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
+const { Client, LocalAuth, MessageMedia, Poll } = require('whatsapp-web.js');
 const path = require('path');
 const fs = require('fs');
 const mime = require('mime-types');
@@ -780,6 +780,57 @@ class ClientManager {
             };
         } catch (error) {
             console.error(`Error sending welcome message to group ${groupId} for user ${userId}:`, error);
+
+            // Handle detached frame error
+            if (error.message && error.message.includes('detached Frame')) {
+                console.log(`[WARN] Session for user ${userId} has invalid frame`);
+                this.clientStatus.set(userId, 'disconnected');
+            }
+
+            throw error;
+        }
+    }
+
+    async sendPoll(userId, groupId, question, options, allowMultipleAnswers = false) {
+        const client = this.clients.get(userId);
+        if (!client || this.clientStatus.get(userId) !== 'ready') {
+            throw new Error('Client not ready');
+        }
+
+        try {
+            const chat = await client.getChatById(groupId);
+
+            if (!chat) {
+                throw new Error('Group not found');
+            }
+
+            // Validate poll options (WhatsApp requires 2-12 options)
+            if (!options || options.length < 2) {
+                throw new Error('Poll must have at least 2 options');
+            }
+            if (options.length > 12) {
+                throw new Error('Poll cannot have more than 12 options');
+            }
+
+            // Create the poll
+            const poll = new Poll(question, options, {
+                allowMultipleAnswers: allowMultipleAnswers
+            });
+
+            console.log(`[POLL] Sending poll to ${groupId} for user ${userId}: "${question}" with ${options.length} options`);
+
+            const result = await chat.sendMessage(poll);
+
+            return {
+                success: true,
+                messageId: result.id._serialized,
+                timestamp: result.timestamp,
+                groupId: groupId,
+                question: question,
+                optionsCount: options.length
+            };
+        } catch (error) {
+            console.error(`Error sending poll to group ${groupId} for user ${userId}:`, error);
 
             // Handle detached frame error
             if (error.message && error.message.includes('detached Frame')) {

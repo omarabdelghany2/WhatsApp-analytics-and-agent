@@ -34,7 +34,7 @@ export default function DashboardPage() {
   if (isLoading) {
     return (
       <div className="p-8 flex items-center justify-center">
-        <div className="text-white">Loading...</div>
+        <div className="text-foreground">Loading...</div>
       </div>
     )
   }
@@ -82,21 +82,21 @@ export default function DashboardPage() {
 
   return (
     <div className="p-8">
-      <h1 className="text-2xl font-bold text-white mb-8">Dashboard</h1>
+      <h1 className="text-2xl font-bold text-foreground mb-8">Dashboard</h1>
 
       {/* WhatsApp Status Banner - only for regular users */}
       {!isAdminView && !whatsappStatus?.is_authenticated && (
-        <div className="mb-8 bg-amber-500/10 border border-amber-500 rounded-lg p-4">
+        <div className="mb-8 bg-warning/10 border border-warning rounded-lg p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-amber-500 font-medium">WhatsApp Not Connected</p>
-              <p className="text-amber-400/80 text-sm">
+              <p className="text-warning font-medium">WhatsApp Not Connected</p>
+              <p className="text-warning/80 text-sm">
                 Connect your WhatsApp account to start monitoring groups
               </p>
             </div>
             <Link
               to={`${basePath}/connect`}
-              className="px-4 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-colors"
+              className="px-4 py-2 bg-warning text-white rounded-lg hover:opacity-90 transition-colors"
             >
               Connect Now
             </Link>
@@ -106,14 +106,14 @@ export default function DashboardPage() {
 
       {/* Admin viewing user - show WhatsApp status */}
       {isAdminView && viewingUser && (
-        <div className={`mb-8 ${viewingUser.whatsapp_connected ? 'bg-green-500/10 border-green-500' : 'bg-slate-700/50 border-slate-600'} border rounded-lg p-4`}>
+        <div className={`mb-8 ${viewingUser.whatsapp_connected ? 'bg-success/10 border-success' : 'bg-surface-secondary/50 border-border'} border rounded-lg p-4`}>
           <div className="flex items-center justify-between">
             <div>
-              <p className={`font-medium ${viewingUser.whatsapp_connected ? 'text-green-500' : 'text-slate-400'}`}>
+              <p className={`font-medium ${viewingUser.whatsapp_connected ? 'text-success' : 'text-muted'}`}>
                 {viewingUser.whatsapp_connected ? 'WhatsApp Connected' : 'WhatsApp Not Connected'}
               </p>
               {viewingUser.whatsapp_phone && (
-                <p className="text-green-400/80 text-sm">{viewingUser.whatsapp_phone}</p>
+                <p className="text-success/80 text-sm">{viewingUser.whatsapp_phone}</p>
               )}
             </div>
           </div>
@@ -127,15 +127,15 @@ export default function DashboardPage() {
           return (
             <div
               key={stat.label}
-              className="bg-slate-800 rounded-lg p-6 border border-slate-700"
+              className="bg-surface rounded-lg p-6 border border-border"
             >
               <div className="flex items-center gap-4">
                 <div className={`${stat.color} p-3 rounded-lg`}>
                   <Icon size={24} className="text-white" />
                 </div>
                 <div>
-                  <p className="text-slate-400 text-sm">{stat.label}</p>
-                  <p className="text-2xl font-bold text-white">{stat.value.toLocaleString()}</p>
+                  <p className="text-muted text-sm">{stat.label}</p>
+                  <p className="text-2xl font-bold text-foreground">{stat.value.toLocaleString()}</p>
                 </div>
               </div>
             </div>
@@ -144,13 +144,13 @@ export default function DashboardPage() {
       </div>
 
       {/* Groups List */}
-      <div className="bg-slate-800 rounded-lg border border-slate-700">
-        <div className="p-4 border-b border-slate-700 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-white">Monitored Groups</h2>
+      <div className="bg-surface rounded-lg border border-border">
+        <div className="p-4 border-b border-border flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-foreground">Monitored Groups</h2>
           {!isAdminView && (
             <Link
               to="/connect"
-              className="text-sm text-blue-500 hover:text-blue-400"
+              className="text-sm text-primary hover:text-primary-hover"
             >
               Add Group
             </Link>
@@ -158,18 +158,18 @@ export default function DashboardPage() {
         </div>
 
         {groups && groups.length > 0 ? (
-          <div className="divide-y divide-slate-700">
+          <div className="divide-y divide-border">
             {groups.map(group => (
               <div key={group.id} className="p-4 flex items-center justify-between">
                 <div>
-                  <p className="text-white font-medium">{group.group_name}</p>
-                  <p className="text-sm text-slate-400">
+                  <p className="text-foreground font-medium">{group.group_name}</p>
+                  <p className="text-sm text-muted">
                     {group.member_count} members
                   </p>
                 </div>
                 <Link
                   to={`${basePath}/messages?group=${group.id}`}
-                  className="text-sm text-blue-500 hover:text-blue-400"
+                  className="text-sm text-primary hover:text-primary-hover"
                 >
                   View Messages
                 </Link>
@@ -177,7 +177,7 @@ export default function DashboardPage() {
             ))}
           </div>
         ) : (
-          <div className="p-8 text-center text-slate-400">
+          <div className="p-8 text-center text-muted">
             <p>No groups being monitored</p>
             {!isAdminView && (
               <p className="text-sm mt-2">

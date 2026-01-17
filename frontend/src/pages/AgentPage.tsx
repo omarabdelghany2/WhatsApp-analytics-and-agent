@@ -228,14 +228,14 @@ export default function AgentPage() {
     <div className="p-6 max-w-6xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-white">AI Agents</h1>
-          <p className="text-slate-400 mt-1">
+          <h1 className="text-2xl font-bold text-foreground">AI Agents</h1>
+          <p className="text-muted mt-1">
             Configure AI agents that respond when you're mentioned in groups
           </p>
         </div>
         <button
           onClick={() => setShowCreateModal(true)}
-          className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-2"
+          className="px-4 py-2 bg-primary text-foreground rounded-lg hover:bg-primary-hover transition-colors flex items-center gap-2"
         >
           <Plus size={16} />
           Add Agent
@@ -251,7 +251,7 @@ export default function AgentPage() {
             </div>
             <div>
               <h3 className="font-medium text-green-400">Active Agent: {activeAgent.name}</h3>
-              <p className="text-sm text-slate-400">
+              <p className="text-sm text-muted">
                 Responding to mentions in {activeAgent.enabled_group_ids?.length || 0} groups
               </p>
             </div>
@@ -261,27 +261,27 @@ export default function AgentPage() {
 
       {/* Agents List */}
       {isLoading ? (
-        <div className="bg-slate-800 rounded-lg p-12 text-center">
-          <Loader2 size={48} className="mx-auto mb-4 text-blue-400 animate-spin" />
-          <p className="text-slate-400">Loading agents...</p>
+        <div className="bg-surface rounded-lg p-12 text-center">
+          <Loader2 size={48} className="mx-auto mb-4 text-primary animate-spin" />
+          <p className="text-muted">Loading agents...</p>
         </div>
       ) : agentsData?.agents && agentsData.agents.length > 0 ? (
         <div className="space-y-4">
           {agentsData.agents.map((agent) => (
             <div
               key={agent.id}
-              className={`bg-slate-800 rounded-lg p-4 ${
+              className={`bg-surface rounded-lg p-4 ${
                 agent.is_active ? 'ring-2 ring-green-500/50' : ''
               }`}
             >
               <div className="flex items-start justify-between gap-4 mb-3">
                 <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-lg ${agent.is_active ? 'bg-green-500/20' : 'bg-slate-700'}`}>
-                    <Bot size={24} className={agent.is_active ? 'text-green-400' : 'text-slate-400'} />
+                  <div className={`p-2 rounded-lg ${agent.is_active ? 'bg-green-500/20' : 'bg-surface-secondary'}`}>
+                    <Bot size={24} className={agent.is_active ? 'text-green-400' : 'text-muted'} />
                   </div>
                   <div>
-                    <h3 className="text-white font-medium text-lg">{agent.name}</h3>
-                    <p className="text-sm text-slate-400">
+                    <h3 className="text-foreground font-medium text-lg">{agent.name}</h3>
+                    <p className="text-sm text-muted">
                       {agent.is_active ? 'Active' : 'Inactive'} - {agent.enabled_group_ids?.length || 0} groups enabled
                     </p>
                   </div>
@@ -289,14 +289,14 @@ export default function AgentPage() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => openGroupsModal(agent)}
-                    className="px-3 py-1.5 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition-colors flex items-center gap-1 text-sm"
+                    className="px-3 py-1.5 bg-surface-secondary text-foreground-secondary rounded-lg hover:bg-surface-secondary/80 transition-colors flex items-center gap-1 text-sm"
                   >
                     <Users size={14} />
                     Groups
                   </button>
                   <button
                     onClick={() => openEditModal(agent)}
-                    className="p-1.5 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition-colors"
+                    className="p-1.5 bg-surface-secondary text-foreground-secondary rounded-lg hover:bg-surface-secondary/80 transition-colors"
                   >
                     <Edit size={16} />
                   </button>
@@ -333,49 +333,49 @@ export default function AgentPage() {
 
               {/* Agent Details */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <div className="p-2 bg-slate-700/50 rounded-lg">
-                  <div className="flex items-center gap-1 text-slate-400 text-xs mb-1">
+                <div className="p-2 bg-surface-secondary/50 rounded-lg">
+                  <div className="flex items-center gap-1 text-muted text-xs mb-1">
                     <LinkIcon size={12} />
                     API URL
                   </div>
-                  <p className="text-white text-sm truncate">{agent.api_url.split('/').pop()}</p>
+                  <p className="text-foreground text-sm truncate">{agent.api_url.split('/').pop()}</p>
                 </div>
-                <div className="p-2 bg-slate-700/50 rounded-lg">
-                  <div className="flex items-center gap-1 text-slate-400 text-xs mb-1">
+                <div className="p-2 bg-surface-secondary/50 rounded-lg">
+                  <div className="flex items-center gap-1 text-muted text-xs mb-1">
                     <Key size={12} />
                     API Key
                   </div>
-                  <p className="text-white text-sm font-mono">{agent.api_key}</p>
+                  <p className="text-foreground text-sm font-mono">{agent.api_key}</p>
                 </div>
-                <div className="p-2 bg-slate-700/50 rounded-lg">
-                  <p className="text-slate-400 text-xs mb-1">Input Limit</p>
-                  <p className="text-white text-sm">{agent.input_token_limit} tokens</p>
+                <div className="p-2 bg-surface-secondary/50 rounded-lg">
+                  <p className="text-muted text-xs mb-1">Input Limit</p>
+                  <p className="text-foreground text-sm">{agent.input_token_limit} tokens</p>
                 </div>
-                <div className="p-2 bg-slate-700/50 rounded-lg">
-                  <p className="text-slate-400 text-xs mb-1">Output Limit</p>
-                  <p className="text-white text-sm">{agent.output_token_limit} tokens</p>
+                <div className="p-2 bg-surface-secondary/50 rounded-lg">
+                  <p className="text-muted text-xs mb-1">Output Limit</p>
+                  <p className="text-foreground text-sm">{agent.output_token_limit} tokens</p>
                 </div>
               </div>
 
               {agent.system_prompt && (
-                <div className="mt-3 p-3 bg-slate-700/30 rounded-lg">
-                  <p className="text-xs text-slate-400 mb-1">System Prompt</p>
-                  <p className="text-slate-300 text-sm line-clamp-2">{agent.system_prompt}</p>
+                <div className="mt-3 p-3 bg-surface-secondary/30 rounded-lg">
+                  <p className="text-xs text-muted mb-1">System Prompt</p>
+                  <p className="text-foreground-secondary text-sm line-clamp-2">{agent.system_prompt}</p>
                 </div>
               )}
             </div>
           ))}
         </div>
       ) : (
-        <div className="bg-slate-800 rounded-lg p-12 text-center">
-          <Bot size={48} className="mx-auto mb-4 text-slate-600" />
-          <h3 className="text-lg font-medium text-slate-300 mb-2">No Agents Created</h3>
-          <p className="text-slate-500 mb-4">
+        <div className="bg-surface rounded-lg p-12 text-center">
+          <Bot size={48} className="mx-auto mb-4 text-muted" />
+          <h3 className="text-lg font-medium text-foreground-secondary mb-2">No Agents Created</h3>
+          <p className="text-muted mb-4">
             Create an AI agent to automatically respond when you're mentioned in groups.
           </p>
           <button
             onClick={() => setShowCreateModal(true)}
-            className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+            className="px-4 py-2 bg-primary text-foreground rounded-lg hover:bg-primary-hover transition-colors"
           >
             Create Your First Agent
           </button>
@@ -385,9 +385,9 @@ export default function AgentPage() {
       {/* Create/Edit Modal */}
       {(showCreateModal || showEditModal) && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-lg border border-slate-700 w-full max-w-lg max-h-[90vh] flex flex-col">
-            <div className="p-4 border-b border-slate-700 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-white">
+          <div className="bg-surface rounded-lg border border-border w-full max-w-lg max-h-[90vh] flex flex-col">
+            <div className="p-4 border-b border-border flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-foreground">
                 {showEditModal ? 'Edit Agent' : 'Create Agent'}
               </h2>
               <button
@@ -397,16 +397,16 @@ export default function AgentPage() {
                   setSelectedAgent(null)
                   resetForm()
                 }}
-                className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+                className="p-2 hover:bg-surface-secondary rounded-lg transition-colors"
               >
-                <X size={20} className="text-slate-400" />
+                <X size={20} className="text-muted" />
               </button>
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {/* Name */}
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
+                <label className="block text-sm font-medium text-foreground-secondary mb-2">
                   Agent Name *
                 </label>
                 <input
@@ -414,13 +414,13 @@ export default function AgentPage() {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="My AI Assistant"
-                  className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-4 py-2 bg-surface-secondary border border-border rounded-lg text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
                 />
               </div>
 
               {/* API URL */}
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
+                <label className="block text-sm font-medium text-foreground-secondary mb-2">
                   API URL *
                 </label>
                 <input
@@ -428,13 +428,13 @@ export default function AgentPage() {
                   value={apiUrl}
                   onChange={(e) => setApiUrl(e.target.value)}
                   placeholder="https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent"
-                  className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  className="w-full px-4 py-2 bg-surface-secondary border border-border rounded-lg text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary text-sm"
                 />
               </div>
 
               {/* API Key */}
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
+                <label className="block text-sm font-medium text-foreground-secondary mb-2">
                   API Key *
                 </label>
                 <input
@@ -442,54 +442,54 @@ export default function AgentPage() {
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
                   placeholder="Your API key"
-                  className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                  className="w-full px-4 py-2 bg-surface-secondary border border-border rounded-lg text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary font-mono"
                 />
               </div>
 
               {/* Token Limits */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-2">
+                  <label className="block text-sm font-medium text-foreground-secondary mb-2">
                     Input Token Limit
                   </label>
                   <input
                     type="number"
                     value={inputTokenLimit}
                     onChange={(e) => setInputTokenLimit(parseInt(e.target.value) || 4096)}
-                    className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-4 py-2 bg-surface-secondary border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-2">
+                  <label className="block text-sm font-medium text-foreground-secondary mb-2">
                     Output Token Limit
                   </label>
                   <input
                     type="number"
                     value={outputTokenLimit}
                     onChange={(e) => setOutputTokenLimit(parseInt(e.target.value) || 1024)}
-                    className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-4 py-2 bg-surface-secondary border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
               </div>
 
               {/* System Prompt */}
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
+                <label className="block text-sm font-medium text-foreground-secondary mb-2">
                   System Prompt (Optional)
                 </label>
-                <p className="text-xs text-slate-400 mb-2">
+                <p className="text-xs text-muted mb-2">
                   Define the agent's personality and behavior
                 </p>
                 <textarea
                   value={systemPrompt}
                   onChange={(e) => setSystemPrompt(e.target.value)}
                   placeholder="You are a helpful and friendly assistant. Be concise and professional."
-                  className="w-full h-32 px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                  className="w-full h-32 px-4 py-3 bg-surface-secondary border border-border rounded-lg text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary resize-none"
                 />
               </div>
             </div>
 
-            <div className="p-4 border-t border-slate-700 flex items-center justify-end gap-3">
+            <div className="p-4 border-t border-border flex items-center justify-end gap-3">
               <button
                 onClick={() => {
                   setShowCreateModal(false)
@@ -497,14 +497,14 @@ export default function AgentPage() {
                   setSelectedAgent(null)
                   resetForm()
                 }}
-                className="px-4 py-2 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition-colors"
+                className="px-4 py-2 bg-surface-secondary text-foreground-secondary rounded-lg hover:bg-surface-secondary/80 transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={showEditModal ? handleUpdate : handleCreate}
                 disabled={!name || !apiUrl || !apiKey || createMutation.isPending || updateMutation.isPending}
-                className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                className="px-4 py-2 bg-primary text-foreground rounded-lg hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
               >
                 {(createMutation.isPending || updateMutation.isPending) && (
                   <Loader2 size={16} className="animate-spin" />
@@ -526,60 +526,60 @@ export default function AgentPage() {
       {/* Groups Modal */}
       {showGroupsModal && selectedAgent && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-lg border border-slate-700 w-full max-w-md max-h-[80vh] flex flex-col">
-            <div className="p-4 border-b border-slate-700 flex items-center justify-between">
+          <div className="bg-surface rounded-lg border border-border w-full max-w-md max-h-[80vh] flex flex-col">
+            <div className="p-4 border-b border-border flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-semibold text-white">Enable Groups</h2>
-                <p className="text-sm text-slate-400">Agent: {selectedAgent.name}</p>
+                <h2 className="text-lg font-semibold text-foreground">Enable Groups</h2>
+                <p className="text-sm text-muted">Agent: {selectedAgent.name}</p>
               </div>
               <button
                 onClick={() => {
                   setShowGroupsModal(false)
                   setSelectedAgent(null)
                 }}
-                className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+                className="p-2 hover:bg-surface-secondary rounded-lg transition-colors"
               >
-                <X size={20} className="text-slate-400" />
+                <X size={20} className="text-muted" />
               </button>
             </div>
 
             <div className="flex-1 overflow-y-auto">
               {groupsData?.groups && groupsData.groups.length > 0 ? (
-                <div className="divide-y divide-slate-700">
+                <div className="divide-y divide-border">
                   {groupsData.groups.map((group) => (
                     <button
                       key={group.id}
                       onClick={() => toggleGroup(group.id)}
-                      className="w-full p-4 flex items-center gap-3 hover:bg-slate-700/50 transition-colors text-left"
+                      className="w-full p-4 flex items-center gap-3 hover:bg-surface-secondary/50 transition-colors text-left"
                     >
                       {selectedGroupIds.includes(group.id) ? (
-                        <CheckSquare size={20} className="text-blue-400 flex-shrink-0" />
+                        <CheckSquare size={20} className="text-primary flex-shrink-0" />
                       ) : (
-                        <Square size={20} className="text-slate-500 flex-shrink-0" />
+                        <Square size={20} className="text-muted flex-shrink-0" />
                       )}
                       <div className="flex-1 min-w-0">
-                        <p className="text-white truncate">{group.group_name}</p>
-                        <p className="text-xs text-slate-400">{group.member_count} members</p>
+                        <p className="text-foreground truncate">{group.group_name}</p>
+                        <p className="text-xs text-muted">{group.member_count} members</p>
                       </div>
                     </button>
                   ))}
                 </div>
               ) : (
-                <div className="p-8 text-center text-slate-400">
+                <div className="p-8 text-center text-muted">
                   <Users size={32} className="mx-auto mb-2 opacity-50" />
                   <p>No groups available</p>
                 </div>
               )}
             </div>
 
-            <div className="p-4 border-t border-slate-700 flex items-center justify-between">
-              <p className="text-sm text-slate-400">
+            <div className="p-4 border-t border-border flex items-center justify-between">
+              <p className="text-sm text-muted">
                 {selectedGroupIds.length} groups selected
               </p>
               <button
                 onClick={handleSaveGroups}
                 disabled={updateGroupsMutation.isPending}
-                className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                className="px-4 py-2 bg-primary text-foreground rounded-lg hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
               >
                 {updateGroupsMutation.isPending && (
                   <Loader2 size={16} className="animate-spin" />

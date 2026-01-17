@@ -194,47 +194,47 @@ export default function MessagesPage() {
   return (
     <div className="flex h-[calc(100vh-4rem)]">
       {/* Groups Sidebar */}
-      <div className="w-80 bg-slate-800 border-r border-slate-700 flex flex-col">
-        <div className="p-4 border-b border-slate-700">
-          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+      <div className="w-80 bg-surface border-r border-border flex flex-col">
+        <div className="p-4 border-b border-border">
+          <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
             <Users size={20} />
             Groups
           </h2>
-          <p className="text-sm text-slate-400 mt-1">
+          <p className="text-sm text-muted mt-1">
             {groups?.length || 0} monitored groups
           </p>
         </div>
 
         <div className="flex-1 overflow-y-auto">
           {groups && groups.length > 0 ? (
-            <div className="divide-y divide-slate-700">
+            <div className="divide-y divide-border">
               {groups.map(group => (
                 <button
                   key={group.id}
                   onClick={() => setSelectedGroup(group)}
-                  className={`w-full p-4 text-left hover:bg-slate-700 transition-colors flex items-center justify-between ${
-                    selectedGroup?.id === group.id ? 'bg-slate-700 border-l-4 border-blue-500' : ''
+                  className={`w-full p-4 text-left hover:bg-surface-secondary transition-colors flex items-center justify-between ${
+                    selectedGroup?.id === group.id ? 'bg-surface-secondary border-l-4 border-primary' : ''
                   }`}
                 >
                   <div className="flex-1 min-w-0">
                     <p className={`font-medium truncate ${
-                      selectedGroup?.id === group.id ? 'text-white' : 'text-slate-200'
+                      selectedGroup?.id === group.id ? 'text-foreground' : 'text-foreground-secondary'
                     }`}>
                       {group.group_name}
                     </p>
-                    <p className="text-sm text-slate-400">
+                    <p className="text-sm text-muted">
                       {group.member_count} members
                     </p>
                   </div>
                   <ChevronRight
                     size={18}
-                    className={`text-slate-400 ${selectedGroup?.id === group.id ? 'text-blue-400' : ''}`}
+                    className={`text-muted ${selectedGroup?.id === group.id ? 'text-primary' : ''}`}
                   />
                 </button>
               ))}
             </div>
           ) : (
-            <div className="p-8 text-center text-slate-400">
+            <div className="p-8 text-center text-muted">
               <Users size={48} className="mx-auto mb-4 opacity-50" />
               <p>No groups monitored</p>
               {!isAdminView && (
@@ -246,21 +246,21 @@ export default function MessagesPage() {
       </div>
 
       {/* Messages Panel */}
-      <div className="flex-1 flex flex-col bg-slate-900">
+      <div className="flex-1 flex flex-col bg-background">
         {selectedGroup ? (
           <>
             {/* Header */}
-            <div className="p-4 bg-slate-800 border-b border-slate-700 flex items-center justify-between">
+            <div className="p-4 bg-surface border-b border-border flex items-center justify-between">
               <div>
-                <h1 className="text-xl font-bold text-white">{selectedGroup.group_name}</h1>
+                <h1 className="text-xl font-bold text-foreground">{selectedGroup.group_name}</h1>
                 <div className="flex items-center gap-3 mt-1">
-                  <span className="text-sm text-slate-400">
+                  <span className="text-sm text-muted">
                     {messages?.total || 0} messages
                   </span>
                   {!isAdminView && (
                     <button
                       onClick={() => setShowMembersModal(true)}
-                      className="inline-flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300 transition-colors"
+                      className="inline-flex items-center gap-1 text-sm text-primary hover:text-primary-hover transition-colors"
                     >
                       <Users size={14} />
                       {selectedGroup.member_count} members
@@ -280,13 +280,13 @@ export default function MessagesPage() {
               {/* Search - only for regular users */}
               {!isAdminView && (
                 <div className="relative w-64">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={18} />
                   <input
                     type="text"
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
                     placeholder="Search messages..."
-                    className="w-full pl-10 pr-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full pl-10 pr-4 py-2 bg-surface-secondary border border-border rounded-lg text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
               )}
@@ -302,11 +302,11 @@ export default function MessagesPage() {
                       <button
                         onClick={() => setPage(p => p + 1)}
                         disabled={(page + 1) * limit >= messages.total}
-                        className="px-4 py-2 bg-slate-700 text-white rounded-lg disabled:opacity-50 hover:bg-slate-600 text-sm"
+                        className="px-4 py-2 bg-surface-secondary text-foreground rounded-lg disabled:opacity-50 hover:bg-surface-secondary/80 text-sm"
                       >
                         Load Older
                       </button>
-                      <span className="text-slate-400 text-sm">
+                      <span className="text-muted text-sm">
                         Page {page + 1} of {Math.ceil(messages.total / limit)}
                       </span>
                     </div>
@@ -318,28 +318,28 @@ export default function MessagesPage() {
                       key={message.id}
                       className={`p-4 rounded-lg ${
                         realtimeMessages.some(m => m.id === message.id)
-                          ? 'bg-blue-500/10 border border-blue-500/30'
-                          : 'bg-slate-800'
+                          ? 'bg-primary/10 border border-primary/30'
+                          : 'bg-surface'
                       }`}
                     >
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
-                          <span className="font-medium text-white">{message.sender_name}</span>
+                          <span className="font-medium text-foreground">{message.sender_name}</span>
                           {message.sender_phone && (
-                            <span className="text-sm text-slate-400">({message.sender_phone})</span>
+                            <span className="text-sm text-muted">({message.sender_phone})</span>
                           )}
                         </div>
-                        <span className="text-xs text-slate-500">
+                        <span className="text-xs text-muted">
                           {format(new Date(message.timestamp), 'MMM d, HH:mm')}
                         </span>
                       </div>
-                      <p className="text-slate-300 whitespace-pre-wrap">{message.content}</p>
+                      <p className="text-foreground-secondary whitespace-pre-wrap">{message.content}</p>
                     </div>
                   ))}
 
                   {/* New messages indicator */}
                   {!isAdminView && realtimeMessages.length > 0 && (
-                    <div className="text-center text-blue-400 text-sm py-2">
+                    <div className="text-center text-primary text-sm py-2">
                       {realtimeMessages.length} new message{realtimeMessages.length > 1 ? 's' : ''}
                     </div>
                   )}
@@ -348,7 +348,7 @@ export default function MessagesPage() {
                 </>
               ) : (
                 <div className="flex-1 flex items-center justify-center">
-                  <div className="text-center text-slate-400">
+                  <div className="text-center text-muted">
                     <MessageSquare size={48} className="mx-auto mb-4 opacity-50" />
                     <p>No messages yet</p>
                     {searchQuery && (
@@ -361,30 +361,30 @@ export default function MessagesPage() {
 
             {/* Message Composer - only for regular users */}
             {!isAdminView && (
-              <div className="p-4 bg-slate-800 border-t border-slate-700">
+              <div className="p-4 bg-surface border-t border-border">
                 {/* Media Preview */}
                 {selectedMedia && (
-                  <div className="mb-3 p-3 bg-slate-700 rounded-lg flex items-center justify-between">
+                  <div className="mb-3 p-3 bg-surface-secondary rounded-lg flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       {mediaPreview ? (
                         <img src={mediaPreview} alt="Preview" className="w-12 h-12 object-cover rounded" />
                       ) : (
-                        <div className="w-12 h-12 bg-slate-600 rounded flex items-center justify-center">
-                          <Paperclip size={20} className="text-slate-400" />
+                        <div className="w-12 h-12 bg-surface rounded flex items-center justify-center">
+                          <Paperclip size={20} className="text-muted" />
                         </div>
                       )}
                       <div>
-                        <p className="text-white text-sm truncate max-w-xs">{selectedMedia.name}</p>
-                        <p className="text-xs text-slate-400">
+                        <p className="text-foreground text-sm truncate max-w-xs">{selectedMedia.name}</p>
+                        <p className="text-xs text-muted">
                           {(selectedMedia.size / 1024 / 1024).toFixed(2)} MB
                         </p>
                       </div>
                     </div>
                     <button
                       onClick={clearMedia}
-                      className="p-1 hover:bg-slate-600 rounded transition-colors"
+                      className="p-1 hover:bg-surface rounded transition-colors"
                     >
-                      <X size={18} className="text-slate-400" />
+                      <X size={18} className="text-muted" />
                     </button>
                   </div>
                 )}
@@ -410,10 +410,10 @@ export default function MessagesPage() {
                   {/* Attach Button */}
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    className="p-2.5 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors flex-shrink-0"
+                    className="p-2.5 bg-surface-secondary hover:bg-surface-secondary/80 rounded-lg transition-colors flex-shrink-0"
                     title="Attach file"
                   >
-                    <Paperclip size={20} className="text-slate-300" />
+                    <Paperclip size={20} className="text-foreground-secondary" />
                   </button>
 
                   {/* Message Input */}
@@ -424,7 +424,7 @@ export default function MessagesPage() {
                       onKeyDown={handleKeyPress}
                       placeholder="Type a message..."
                       rows={1}
-                      className="w-full px-4 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                      className="w-full px-4 py-2.5 bg-surface-secondary border border-border rounded-lg text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary resize-none"
                       style={{ minHeight: '44px', maxHeight: '120px' }}
                     />
                   </div>
@@ -433,7 +433,7 @@ export default function MessagesPage() {
                   <button
                     onClick={handleSend}
                     disabled={isSending || (!messageContent.trim() && !selectedMedia)}
-                    className="p-2.5 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors flex-shrink-0"
+                    className="p-2.5 bg-primary hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors flex-shrink-0"
                     title="Send message"
                   >
                     {isSending ? (
@@ -444,7 +444,7 @@ export default function MessagesPage() {
                   </button>
                 </div>
 
-                <p className="text-xs text-slate-500 mt-2">
+                <p className="text-xs text-muted mt-2">
                   Press Enter to send, Shift+Enter for new line
                 </p>
               </div>
@@ -453,9 +453,9 @@ export default function MessagesPage() {
         ) : (
           /* No group selected */
           <div className="flex-1 flex items-center justify-center">
-            <div className="text-center text-slate-400">
+            <div className="text-center text-muted">
               <MessageSquare size={64} className="mx-auto mb-4 opacity-50" />
-              <h2 className="text-xl font-semibold text-slate-300 mb-2">Select a Group</h2>
+              <h2 className="text-xl font-semibold text-foreground-secondary mb-2">Select a Group</h2>
               <p>Choose a group from the sidebar to view messages</p>
             </div>
           </div>
@@ -465,18 +465,18 @@ export default function MessagesPage() {
       {/* Members Modal */}
       {showMembersModal && selectedGroup && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-slate-800 rounded-lg border border-slate-700 w-full max-w-md max-h-[80vh] flex flex-col">
+          <div className="bg-surface rounded-lg border border-border w-full max-w-md max-h-[80vh] flex flex-col">
             {/* Modal Header */}
-            <div className="p-4 border-b border-slate-700 flex items-center justify-between">
+            <div className="p-4 border-b border-border flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-semibold text-white">Group Members</h2>
-                <p className="text-sm text-slate-400">{selectedGroup.group_name}</p>
+                <h2 className="text-lg font-semibold text-foreground">Group Members</h2>
+                <p className="text-sm text-muted">{selectedGroup.group_name}</p>
               </div>
               <button
                 onClick={() => setShowMembersModal(false)}
-                className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+                className="p-2 hover:bg-surface-secondary rounded-lg transition-colors"
               >
-                <X size={20} className="text-slate-400" />
+                <X size={20} className="text-muted" />
               </button>
             </div>
 
@@ -484,11 +484,11 @@ export default function MessagesPage() {
             <div className="flex-1 overflow-y-auto">
               {membersLoading ? (
                 <div className="p-8 text-center">
-                  <Loader2 className="animate-spin mx-auto mb-4 text-slate-400" size={32} />
-                  <p className="text-slate-400">Loading members...</p>
+                  <Loader2 className="animate-spin mx-auto mb-4 text-muted" size={32} />
+                  <p className="text-muted">Loading members...</p>
                 </div>
               ) : membersData?.members && membersData.members.length > 0 ? (
-                <div className="divide-y divide-slate-700">
+                <div className="divide-y divide-border">
                   {/* Sort: admins first, then alphabetically */}
                   {[...membersData.members]
                     .sort((a, b) => {
@@ -498,12 +498,12 @@ export default function MessagesPage() {
                     })
                     .map((member) => (
                       <div key={member.id} className="p-3 flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-white font-medium">
+                        <div className="w-10 h-10 rounded-full bg-surface-secondary flex items-center justify-center text-foreground font-medium">
                           {member.name.charAt(0).toUpperCase()}
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <p className="text-white font-medium truncate">{member.name}</p>
+                            <p className="text-foreground font-medium truncate">{member.name}</p>
                             {member.isAdmin && (
                               <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400">
                                 <Shield size={10} />
@@ -511,13 +511,13 @@ export default function MessagesPage() {
                               </span>
                             )}
                           </div>
-                          <p className="text-sm text-slate-400">{member.phone}</p>
+                          <p className="text-sm text-muted">{member.phone}</p>
                         </div>
                       </div>
                     ))}
                 </div>
               ) : (
-                <div className="p-8 text-center text-slate-400">
+                <div className="p-8 text-center text-muted">
                   <Users size={48} className="mx-auto mb-4 opacity-50" />
                   <p>Could not load members</p>
                   <p className="text-sm mt-2">Make sure WhatsApp is connected</p>
@@ -526,8 +526,8 @@ export default function MessagesPage() {
             </div>
 
             {/* Modal Footer */}
-            <div className="p-4 border-t border-slate-700">
-              <p className="text-sm text-slate-400 text-center">
+            <div className="p-4 border-t border-border">
+              <p className="text-sm text-muted text-center">
                 {membersData?.members?.length || 0} members
                 {membersData?.members && ` (${membersData.members.filter(m => m.isAdmin).length} admins)`}
               </p>

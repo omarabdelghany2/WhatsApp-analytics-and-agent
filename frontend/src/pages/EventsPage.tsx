@@ -123,42 +123,42 @@ export default function EventsPage() {
 
   return (
     <div className="p-8">
-      <h1 className="text-2xl font-bold text-white mb-8">Member Events</h1>
+      <h1 className="text-2xl font-bold text-foreground mb-8">Member Events</h1>
 
       {/* Summary Stats - only for regular users */}
       {!isAdminView && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-          <div className="bg-slate-800 rounded-lg border border-slate-700 p-4">
+          <div className="bg-surface rounded-lg border border-border p-4">
             <div className="flex items-center gap-3">
               <div className="bg-green-500/20 p-2 rounded-lg">
                 <UserPlus className="text-green-500" size={20} />
               </div>
               <div>
-                <p className="text-slate-400 text-sm">Total Joins</p>
-                <p className="text-xl font-bold text-white">{summary?.total_joins || 0}</p>
+                <p className="text-muted text-sm">Total Joins</p>
+                <p className="text-xl font-bold text-foreground">{summary?.total_joins || 0}</p>
               </div>
             </div>
           </div>
 
-          <div className="bg-slate-800 rounded-lg border border-slate-700 p-4">
+          <div className="bg-surface rounded-lg border border-border p-4">
             <div className="flex items-center gap-3">
               <div className="bg-red-500/20 p-2 rounded-lg">
                 <UserMinus className="text-red-500" size={20} />
               </div>
               <div>
-                <p className="text-slate-400 text-sm">Total Leaves</p>
-                <p className="text-xl font-bold text-white">{summary?.total_leaves || 0}</p>
+                <p className="text-muted text-sm">Total Leaves</p>
+                <p className="text-xl font-bold text-foreground">{summary?.total_leaves || 0}</p>
               </div>
             </div>
           </div>
 
-          <div className="bg-slate-800 rounded-lg border border-slate-700 p-4">
+          <div className="bg-surface rounded-lg border border-border p-4">
             <div className="flex items-center gap-3">
-              <div className="bg-blue-500/20 p-2 rounded-lg">
-                <Users className="text-blue-500" size={20} />
+              <div className="bg-primary/20 p-2 rounded-lg">
+                <Users className="text-primary" size={20} />
               </div>
               <div>
-                <p className="text-slate-400 text-sm">Net Change</p>
+                <p className="text-muted text-sm">Net Change</p>
                 <p className={`text-xl font-bold ${(summary?.net_change || 0) >= 0 ? 'text-green-500' : 'text-red-500'}`}>
                   {(summary?.net_change || 0) >= 0 ? '+' : ''}{summary?.net_change || 0}
                 </p>
@@ -169,14 +169,14 @@ export default function EventsPage() {
       )}
 
       {/* Filters */}
-      <div className="bg-slate-800 rounded-lg border border-slate-700 p-4 mb-6">
+      <div className="bg-surface rounded-lg border border-border p-4 mb-6">
         <div className="flex items-center gap-2 mb-4">
-          <Filter size={18} className="text-slate-400" />
-          <span className="text-white font-medium">Filters</span>
+          <Filter size={18} className="text-muted" />
+          <span className="text-foreground font-medium">Filters</span>
           <div className="ml-auto flex items-center gap-3">
             <button
               onClick={clearFilters}
-              className="text-sm text-blue-500 hover:text-blue-400"
+              className="text-sm text-primary hover:text-primary-hover"
             >
               Clear All
             </button>
@@ -200,11 +200,11 @@ export default function EventsPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
           {/* Event Type */}
           <div>
-            <label className="block text-sm text-slate-400 mb-2">Event Type</label>
+            <label className="block text-sm text-muted mb-2">Event Type</label>
             <select
               value={filters.event_type}
               onChange={e => handleFilterChange('event_type', e.target.value)}
-              className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 bg-surface-secondary border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
             >
               <option value="">All Events</option>
               <option value="JOIN">Joins</option>
@@ -214,11 +214,11 @@ export default function EventsPage() {
 
           {/* Group */}
           <div>
-            <label className="block text-sm text-slate-400 mb-2">Group</label>
+            <label className="block text-sm text-muted mb-2">Group</label>
             <select
               value={filters.group_id || ''}
               onChange={e => handleFilterChange('group_id', e.target.value ? Number(e.target.value) : undefined)}
-              className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 bg-surface-secondary border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
             >
               <option value="">All Groups</option>
               {groups?.map(group => (
@@ -231,51 +231,51 @@ export default function EventsPage() {
 
           {/* Date From */}
           <div>
-            <label className="block text-sm text-slate-400 mb-2">From Date</label>
+            <label className="block text-sm text-muted mb-2">From Date</label>
             <input
               type="date"
               value={filters.date_from}
               onChange={e => handleFilterChange('date_from', e.target.value)}
-              className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 bg-surface-secondary border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
             />
           </div>
 
           {/* Date To */}
           <div>
-            <label className="block text-sm text-slate-400 mb-2">To Date</label>
+            <label className="block text-sm text-muted mb-2">To Date</label>
             <input
               type="date"
               value={filters.date_to}
               onChange={e => handleFilterChange('date_to', e.target.value)}
-              className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 bg-surface-secondary border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
             />
           </div>
 
           {/* Member Name */}
           <div>
-            <label className="block text-sm text-slate-400 mb-2">Member Name</label>
+            <label className="block text-sm text-muted mb-2">Member Name</label>
             <input
               type="text"
               value={filters.member_name}
               onChange={e => handleFilterChange('member_name', e.target.value)}
               placeholder="Search member..."
-              className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 bg-surface-secondary border border-border rounded-lg text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
             />
           </div>
         </div>
       </div>
 
       {/* Events List */}
-      <div className="bg-slate-800 rounded-lg border border-slate-700">
-        <div className="p-4 border-b border-slate-700">
-          <h2 className="text-lg font-semibold text-white">
+      <div className="bg-surface rounded-lg border border-border">
+        <div className="p-4 border-b border-border">
+          <h2 className="text-lg font-semibold text-foreground">
             {events?.total || 0} Events
           </h2>
         </div>
 
         {events?.events && events.events.length > 0 ? (
           <>
-            <div className="divide-y divide-slate-700">
+            <div className="divide-y divide-border">
               {events.events.map(event => (
                 <div key={event.id} className="p-4 flex items-center gap-4">
                   <div className={`p-2 rounded-lg ${event.event_type === 'JOIN' ? 'bg-green-500/20' : 'bg-red-500/20'}`}>
@@ -288,20 +288,20 @@ export default function EventsPage() {
 
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-medium text-white">{event.member_name}</span>
+                      <span className="font-medium text-foreground">{event.member_name}</span>
                       {event.member_phone && (
-                        <span className="text-sm text-slate-400">({event.member_phone})</span>
+                        <span className="text-sm text-muted">({event.member_phone})</span>
                       )}
                       <span className={`text-xs px-2 py-0.5 rounded ${event.event_type === 'JOIN' ? 'bg-green-500/20 text-green-500' : 'bg-red-500/20 text-red-500'}`}>
                         {event.event_type}
                       </span>
                     </div>
-                    <p className="text-sm text-slate-400">{event.group_name}</p>
+                    <p className="text-sm text-muted">{event.group_name}</p>
                   </div>
 
                   <div className="text-right">
-                    <p className="text-sm text-white">{format(new Date(event.event_date), 'MMM d, yyyy')}</p>
-                    <p className="text-xs text-slate-500">{format(new Date(event.timestamp), 'HH:mm')}</p>
+                    <p className="text-sm text-foreground">{format(new Date(event.event_date), 'MMM d, yyyy')}</p>
+                    <p className="text-xs text-muted">{format(new Date(event.timestamp), 'HH:mm')}</p>
                   </div>
                 </div>
               ))}
@@ -309,21 +309,21 @@ export default function EventsPage() {
 
             {/* Pagination */}
             {events.total > limit && (
-              <div className="p-4 border-t border-slate-700 flex items-center justify-between">
+              <div className="p-4 border-t border-border flex items-center justify-between">
                 <button
                   onClick={() => setPage(p => Math.max(0, p - 1))}
                   disabled={page === 0}
-                  className="px-4 py-2 bg-slate-700 text-white rounded-lg disabled:opacity-50 hover:bg-slate-600"
+                  className="px-4 py-2 bg-surface-secondary text-foreground rounded-lg disabled:opacity-50 hover:bg-surface-secondary/80"
                 >
                   Previous
                 </button>
-                <span className="text-slate-400 text-sm">
+                <span className="text-muted text-sm">
                   Page {page + 1} of {Math.ceil(events.total / limit)}
                 </span>
                 <button
                   onClick={() => setPage(p => p + 1)}
                   disabled={(page + 1) * limit >= events.total}
-                  className="px-4 py-2 bg-slate-700 text-white rounded-lg disabled:opacity-50 hover:bg-slate-600"
+                  className="px-4 py-2 bg-surface-secondary text-foreground rounded-lg disabled:opacity-50 hover:bg-surface-secondary/80"
                 >
                   Next
                 </button>
@@ -331,7 +331,7 @@ export default function EventsPage() {
             )}
           </>
         ) : (
-          <div className="p-8 text-center text-slate-400">
+          <div className="p-8 text-center text-muted">
             <Users size={48} className="mx-auto mb-4 opacity-50" />
             <p>No events found</p>
             <p className="text-sm mt-2">Try adjusting your filters</p>

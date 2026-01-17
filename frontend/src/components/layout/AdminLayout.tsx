@@ -12,6 +12,7 @@ import {
   Award,
   ArrowLeft,
 } from 'lucide-react'
+import HeaderBar from './HeaderBar'
 
 export default function AdminLayout() {
   const { user, logout } = useAuth()
@@ -33,19 +34,19 @@ export default function AdminLayout() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 flex">
+    <div className="min-h-screen bg-background flex">
       {/* Sidebar */}
-      <aside className="w-64 bg-slate-800 border-r border-slate-700">
-        <div className="p-4 border-b border-slate-700">
-          <h1 className="text-xl font-bold text-white">WhatsApp Analytics</h1>
-          <p className="text-xs text-slate-400 mt-1">Admin Mode</p>
+      <aside className="w-64 bg-surface border-r border-border">
+        <div className="p-4 border-b border-border">
+          <h1 className="text-xl font-bold text-foreground">WhatsApp Analytics</h1>
+          <p className="text-xs text-muted mt-1">Admin Mode</p>
         </div>
 
         {/* Back to Accounts Button */}
-        <div className="p-4 border-b border-slate-700">
+        <div className="p-4 border-b border-border">
           <button
             onClick={handleBackToAccounts}
-            className="flex items-center gap-2 w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            className="flex items-center gap-2 w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors"
           >
             <ArrowLeft size={18} />
             <span>Back to Accounts</span>
@@ -54,29 +55,29 @@ export default function AdminLayout() {
 
         {/* Viewing User Info */}
         {viewingUser && (
-          <div className="p-4 border-b border-slate-700 bg-slate-700/30">
-            <p className="text-xs text-slate-400 mb-2">Viewing Account:</p>
+          <div className="p-4 border-b border-border bg-surface-secondary/30">
+            <p className="text-xs text-muted mb-2">Viewing Account:</p>
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white font-medium">
+              <div className="w-10 h-10 bg-primary rounded-full flex items-center justify-center text-white font-medium">
                 {viewingUser.username.charAt(0).toUpperCase()}
               </div>
               <div>
-                <p className="text-white font-medium">{viewingUser.username}</p>
-                <p className="text-xs text-slate-400">{viewingUser.email}</p>
+                <p className="text-foreground font-medium">{viewingUser.username}</p>
+                <p className="text-xs text-muted">{viewingUser.email}</p>
               </div>
             </div>
             <div className="flex items-center gap-2 mt-2">
               {viewingUser.whatsapp_connected ? (
                 <>
-                  <Wifi size={14} className="text-green-500" />
-                  <span className="text-xs text-green-500">
+                  <Wifi size={14} className="text-success" />
+                  <span className="text-xs text-success">
                     {viewingUser.whatsapp_phone || 'Connected'}
                   </span>
                 </>
               ) : (
                 <>
-                  <WifiOff size={14} className="text-slate-500" />
-                  <span className="text-xs text-slate-500">Not Connected</span>
+                  <WifiOff size={14} className="text-muted" />
+                  <span className="text-xs text-muted">Not Connected</span>
                 </>
               )}
             </div>
@@ -94,8 +95,8 @@ export default function AdminLayout() {
                 to={item.path}
                 className={`flex items-center gap-3 px-4 py-2 rounded-lg transition-colors ${
                   isActive
-                    ? 'bg-blue-600 text-white'
-                    : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                    ? 'bg-primary text-white'
+                    : 'text-foreground-secondary hover:bg-surface-secondary hover:text-foreground'
                 }`}
               >
                 <Icon size={20} />
@@ -106,14 +107,14 @@ export default function AdminLayout() {
         </nav>
 
         {/* Admin info */}
-        <div className="absolute bottom-0 left-0 w-64 p-4 border-t border-slate-700 bg-slate-800">
+        <div className="absolute bottom-0 left-0 w-64 p-4 border-t border-border bg-surface">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
                 {user?.username?.charAt(0).toUpperCase()}
               </div>
               <div>
-                <p className="text-sm text-white font-medium">{user?.username}</p>
+                <p className="text-sm text-foreground font-medium">{user?.username}</p>
                 <p className="text-xs text-purple-400">Admin</p>
               </div>
             </div>
@@ -121,7 +122,7 @@ export default function AdminLayout() {
 
           <button
             onClick={logout}
-            className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors w-full"
+            className="flex items-center gap-2 text-muted hover:text-foreground transition-colors w-full"
           >
             <LogOut size={16} />
             <span className="text-sm">Logout</span>
@@ -130,8 +131,11 @@ export default function AdminLayout() {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-auto">
-        <Outlet />
+      <main className="flex-1 overflow-auto flex flex-col">
+        <HeaderBar />
+        <div className="flex-1 overflow-auto">
+          <Outlet />
+        </div>
       </main>
     </div>
   )

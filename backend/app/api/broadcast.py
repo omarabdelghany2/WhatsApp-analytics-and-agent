@@ -33,6 +33,13 @@ class SendBroadcastRequest(BaseModel):
     scheduled_at: Optional[datetime] = None  # If None, send immediately
 
 
+class SendPollRequest(BaseModel):
+    question: str
+    options: List[str]
+    allow_multiple_answers: bool = False
+    group_ids: List[int]  # List of MonitoredGroup IDs
+
+
 class ScheduledMessageResponse(BaseModel):
     id: int
     content: str
@@ -453,6 +460,88 @@ def cancel_scheduled_message(
     db.commit()
 
     return {"success": True, "message": "Scheduled message cancelled"}
+
+
+@router.post("/send-poll")
+async def send_poll_broadcast(
+    request: SendPollRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Send a poll to multiple groups"""
+
+    if not request.question:
+        raise HTTPException(status_code=400, detail="Poll question is required")
+
+    if not request.options or len(request.options) < 2:
+        raise HTTPException(status_code=400, detail="Poll must have at least 2 options")
+
+    if len(request.options) > 12:
+        raise HTTPException(status_code=400, detail="Poll cannot have more than 12 options")
+
+    if not request.group_ids:
+        raise HTTPException(status_code=400, detail="At least one group is required")
+
+    # Validate groups belong to user
+    groups = db.query(MonitoredGroup).filter(
+        MonitoredGroup.id.in_(request.group_ids),
+        MonitoredGroup.user_id == current_user.id,
+        MonitoredGroup.is_active == True
+    ).all()
+
+    if len(groups) != len(request.group_ids):
+        raise HTTPException(status_code=400, detail="One or more groups not found or not active")
+
+    group_names = [g.group_name for g in groups]
+    groups_sent = 0
+    groups_failed = 0
+    errors = []
+
+    # Send poll to each group with delay
+    for i, group in enumerate(groups):
+        if i > 0:
+            await asyncio.sleep(30)  # 30-second delay between groups
+
+        try:
+            result = await whatsapp_bridge.send_poll(
+                user_id=current_user.id,
+                group_id=group.whatsapp_group_id,
+                question=request.question,
+                options=request.options,
+                allow_multiple_answers=request.allow_multiple_answers
+            )
+
+            if result.get('success'):
+                groups_sent += 1
+                await websocket_manager.send_to_user(current_user.id, {
+                    'type': 'poll_progress',
+                    'group_name': group.group_name,
+                    'groups_sent': groups_sent,
+                    'total_groups': len(groups)
+                })
+            else:
+                groups_failed += 1
+                errors.append(f"{group.group_name}: {result.get('error', 'Unknown error')}")
+        except Exception as e:
+            groups_failed += 1
+            errors.append(f"{group.group_name}: {str(e)}")
+
+    # Notify completion
+    await websocket_manager.send_to_user(current_user.id, {
+        'type': 'poll_complete',
+        'groups_sent': groups_sent,
+        'groups_failed': groups_failed,
+        'error_message': "; ".join(errors) if errors else None
+    })
+
+    return {
+        "success": groups_sent > 0,
+        "groups_sent": groups_sent,
+        "groups_failed": groups_failed,
+        "group_names": group_names,
+        "error_message": "; ".join(errors) if errors else None
+    }
 
 
 @router.get("/{message_id}")
