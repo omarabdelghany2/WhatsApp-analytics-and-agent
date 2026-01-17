@@ -201,7 +201,7 @@ module.exports = (clientManager) => {
         try {
             const userId = parseInt(req.params.userId);
             const groupId = req.params.groupId;
-            const { question, options, allowMultipleAnswers } = req.body;
+            const { question, options, allowMultipleAnswers, mentionAll, mentionIds } = req.body;
 
             if (!question) {
                 return res.status(400).json({ success: false, error: 'Poll question is required' });
@@ -220,7 +220,11 @@ module.exports = (clientManager) => {
                 groupId,
                 question,
                 options,
-                allowMultipleAnswers || false
+                allowMultipleAnswers || false,
+                {
+                    mentionAll: mentionAll || false,
+                    mentionIds: mentionIds || []
+                }
             );
 
             res.json(result);

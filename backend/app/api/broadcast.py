@@ -38,6 +38,9 @@ class SendPollRequest(BaseModel):
     options: List[str]
     allow_multiple_answers: bool = False
     group_ids: List[int]  # List of MonitoredGroup IDs
+    mention_type: str = 'none'  # 'none', 'all', 'selected'
+    mention_ids: Optional[List[str]] = None  # Phone numbers for 'selected' mentions
+    scheduled_at: Optional[datetime] = None  # If None, send immediately
 
 
 class ScheduledMessageResponse(BaseModel):
@@ -168,6 +171,110 @@ async def send_immediate_broadcast(
 
         await websocket_manager.send_to_user(user_id, {
             'type': 'broadcast_complete',
+            'message_id': scheduled_msg.id,
+            'status': 'failed',
+            'error_message': str(e)
+        })
+
+
+async def send_immediate_poll(
+    user_id: int,
+    scheduled_msg: ScheduledMessage,
+    db: Session
+):
+    """Send poll immediately with 30-second delays between groups"""
+    try:
+        group_ids = scheduled_msg.group_ids or []
+        groups_sent = 0
+        groups_failed = 0
+        errors = []
+
+        # Mark as sending
+        scheduled_msg.status = 'sending'
+        db.commit()
+
+        for i, group_id in enumerate(group_ids):
+            # 30-second delay between groups (except first)
+            if i > 0:
+                await asyncio.sleep(30)
+
+            try:
+                # Get the WhatsApp group ID
+                group = db.query(MonitoredGroup).filter(
+                    MonitoredGroup.id == group_id,
+                    MonitoredGroup.user_id == user_id
+                ).first()
+
+                if not group:
+                    errors.append(f"Group {group_id} not found")
+                    groups_failed += 1
+                    continue
+
+                # Send the poll with mention support
+                result = await whatsapp_bridge.send_poll(
+                    user_id=user_id,
+                    group_id=group.whatsapp_group_id,
+                    question=scheduled_msg.content,  # Poll question stored in content
+                    options=scheduled_msg.poll_options or [],
+                    allow_multiple_answers=scheduled_msg.poll_allow_multiple or False,
+                    mention_all=(scheduled_msg.mention_type == 'all'),
+                    mention_ids=scheduled_msg.mention_ids if scheduled_msg.mention_type == 'selected' else None
+                )
+
+                if result.get('success'):
+                    groups_sent += 1
+
+                    # Notify progress via WebSocket
+                    await websocket_manager.send_to_user(user_id, {
+                        'type': 'poll_progress',
+                        'message_id': scheduled_msg.id,
+                        'group_name': group.group_name,
+                        'groups_sent': groups_sent,
+                        'total_groups': len(group_ids)
+                    })
+                else:
+                    groups_failed += 1
+                    error_msg = result.get('error', 'Unknown error')
+                    errors.append(f"{group.group_name}: {error_msg}")
+
+            except Exception as e:
+                groups_failed += 1
+                errors.append(f"Group {group_id}: {str(e)}")
+
+        # Update final status
+        scheduled_msg.groups_sent = groups_sent
+        scheduled_msg.groups_failed = groups_failed
+        scheduled_msg.sent_at = datetime.utcnow()
+
+        if groups_failed == 0:
+            scheduled_msg.status = 'sent'
+        elif groups_sent == 0:
+            scheduled_msg.status = 'failed'
+        else:
+            scheduled_msg.status = 'partially_sent'
+
+        if errors:
+            scheduled_msg.error_message = "; ".join(errors)
+
+        db.commit()
+
+        # Notify completion via WebSocket
+        await websocket_manager.send_to_user(user_id, {
+            'type': 'poll_complete',
+            'message_id': scheduled_msg.id,
+            'status': scheduled_msg.status,
+            'groups_sent': groups_sent,
+            'groups_failed': groups_failed,
+            'error_message': scheduled_msg.error_message
+        })
+
+    except Exception as e:
+        scheduled_msg.status = 'failed'
+        scheduled_msg.error_message = str(e)
+        db.commit()
+
+        await websocket_manager.send_to_user(user_id, {
+            'type': 'poll_complete',
             'message_id': scheduled_msg.id,
             'status': 'failed',
             'error_message': str(e)
@@ -375,18 +482,24 @@ def get_scheduled_messages(
     messages = db.query(ScheduledMessage).filter(
         ScheduledMessage.user_id == current_user.id,
         ScheduledMessage.status == 'pending',
-        or_(ScheduledMessage.task_type == 'broadcast', ScheduledMessage.task_type.is_(None))
+        or_(
+            ScheduledMessage.task_type == 'broadcast',
+            ScheduledMessage.task_type == 'poll',
+            ScheduledMessage.task_type.is_(None)
+        )
     ).order_by(ScheduledMessage.scheduled_at).all()
 
     return [
         {
             "id": msg.id,
+            "task_type": msg.task_type or 'broadcast',
             "content": (msg.content[:100] + "..." if len(msg.content) > 100 else msg.content) if msg.content else "",
             "group_names": msg.group_names or [],
             "mention_type": msg.mention_type,
             "scheduled_at": msg.scheduled_at.isoformat() if msg.scheduled_at else None,
             "status": msg.status,
-            "created_at": msg.created_at.isoformat() if msg.created_at else None
+            "created_at": msg.created_at.isoformat() if msg.created_at else None,
+            "poll_options": msg.poll_options if msg.task_type == 'poll' else None
         }
         for msg in messages
     ]
@@ -404,7 +517,11 @@ def get_broadcast_history(
     query = db.query(ScheduledMessage).filter(
         ScheduledMessage.user_id == current_user.id,
         ScheduledMessage.status.in_(['sent', 'failed', 'partially_sent', 'cancelled']),
-        or_(ScheduledMessage.task_type == 'broadcast', ScheduledMessage.task_type.is_(None))
+        or_(
+            ScheduledMessage.task_type == 'broadcast',
+            ScheduledMessage.task_type == 'poll',
+            ScheduledMessage.task_type.is_(None)
+        )
     )
 
     total = query.count()
@@ -418,6 +535,7 @@ def get_broadcast_history(
         "broadcasts": [
             {
                 "id": msg.id,
+                "task_type": msg.task_type or 'broadcast',
                 "content": (msg.content[:100] + "..." if len(msg.content) > 100 else msg.content) if msg.content else "",
                 "group_names": msg.group_names or [],
                 "mention_type": msg.mention_type,
@@ -427,7 +545,8 @@ def get_broadcast_history(
                 "groups_sent": msg.groups_sent or 0,
                 "groups_failed": msg.groups_failed or 0,
                 "error_message": msg.error_message,
-                "created_at": msg.created_at.isoformat() if msg.created_at else None
+                "created_at": msg.created_at.isoformat() if msg.created_at else None,
+                "poll_options": msg.poll_options if msg.task_type == 'poll' else None
             }
             for msg in messages
         ],
@@ -469,7 +588,7 @@ async def send_poll_broadcast(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Send a poll to multiple groups"""
+    """Send a poll to multiple groups (immediate or scheduled)"""
 
     if not request.question:
         raise HTTPException(status_code=400, detail="Poll question is required")
@@ -483,6 +602,12 @@ async def send_poll_broadcast(
     if not request.group_ids:
         raise HTTPException(status_code=400, detail="At least one group is required")
 
+    if request.mention_type not in ['none', 'all', 'selected']:
+        raise HTTPException(status_code=400, detail="Invalid mention_type")
+
+    if request.mention_type == 'selected' and not request.mention_ids:
+        raise HTTPException(status_code=400, detail="mention_ids required for 'selected' mention_type")
+
     # Validate groups belong to user
     groups = db.query(MonitoredGroup).filter(
         MonitoredGroup.id.in_(request.group_ids),
@@ -494,53 +619,53 @@ async def send_poll_broadcast(
         raise HTTPException(status_code=400, detail="One or more groups not found or not active")
 
     group_names = [g.group_name for g in groups]
-    groups_sent = 0
-    groups_failed = 0
-    errors = []
 
-    # Send poll to each group with delay
-    for i, group in enumerate(groups):
-        if i > 0:
-            await asyncio.sleep(30)  # 30-second delay between groups
+    # Determine scheduled time
+    if request.scheduled_at:
+        # Convert to naive datetime for comparison
+        scheduled_at = request.scheduled_at.replace(tzinfo=None) if request.scheduled_at.tzinfo else request.scheduled_at
+        # Validate scheduled time is in the future
+        if scheduled_at <= datetime.utcnow():
+            raise HTTPException(status_code=400, detail="Scheduled time must be in the future")
+        status = 'pending'
+    else:
+        # Immediate send - set status to 'sending' so scheduler doesn't pick it up
+        scheduled_at = datetime.utcnow()
+        status = 'sending'
 
-        try:
-            result = await whatsapp_bridge.send_poll(
-                user_id=current_user.id,
-                group_id=group.whatsapp_group_id,
-                question=request.question,
-                options=request.options,
-                allow_multiple_answers=request.allow_multiple_answers
-            )
+    # Create scheduled message record with task_type='poll'
+    scheduled_msg = ScheduledMessage(
+        user_id=current_user.id,
+        task_type='poll',
+        content=request.question,  # Store poll question in content
+        poll_options=request.options,
+        poll_allow_multiple=request.allow_multiple_answers,
+        group_ids=request.group_ids,
+        group_names=group_names,
+        mention_type=request.mention_type,
+        mention_ids=request.mention_ids,
+        scheduled_at=scheduled_at,
+        status=status
+    )
+    db.add(scheduled_msg)
+    db.commit()
+    db.refresh(scheduled_msg)
 
-            if result.get('success'):
-                groups_sent += 1
-                await websocket_manager.send_to_user(current_user.id, {
-                    'type': 'poll_progress',
-                    'group_name': group.group_name,
-                    'groups_sent': groups_sent,
-                    'total_groups': len(groups)
-                })
-            else:
-                groups_failed += 1
-                errors.append(f"{group.group_name}: {result.get('error', 'Unknown error')}")
-        except Exception as e:
-            groups_failed += 1
-            errors.append(f"{group.group_name}: {str(e)}")
-
-    # Notify completion
-    await websocket_manager.send_to_user(current_user.id, {
-        'type': 'poll_complete',
-        'groups_sent': groups_sent,
-        'groups_failed': groups_failed,
-        'error_message': "; ".join(errors) if errors else None
-    })
+    # If immediate send, execute in background
+    if not request.scheduled_at:
+        background_tasks.add_task(
+            send_immediate_poll,
+            current_user.id,
+            scheduled_msg,
+            db
+        )
 
     return {
-        "success": groups_sent > 0,
-        "groups_sent": groups_sent,
-        "groups_failed": groups_failed,
-        "group_names": group_names,
-        "error_message": "; ".join(errors) if errors else None
+        "success": True,
+        "message_id": scheduled_msg.id,
+        "scheduled": request.scheduled_at is not None,
+        "scheduled_at": scheduled_at.isoformat() if request.scheduled_at else None,
+        "groups": group_names
     }
 
 

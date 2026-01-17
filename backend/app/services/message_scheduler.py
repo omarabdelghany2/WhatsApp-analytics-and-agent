@@ -57,6 +57,8 @@ class MessageScheduler:
 
                 if task_type == 'broadcast':
                     await self._process_broadcast(db, task)
+                elif task_type == 'poll':
+                    await self._process_poll(db, task)
                 elif task_type == 'open_group':
                     await self._process_group_settings(db, task, admin_only=False)
                 elif task_type == 'close_group':
@@ -191,6 +193,117 @@ class MessageScheduler:
             # Notify user of failure
             await websocket_manager.send_to_user(scheduled_msg.user_id, {
                 'type': 'broadcast_complete',
+                'message_id': scheduled_msg.id,
+                'status': 'failed',
+                'error_message': str(e)
+            })
+
+    async def _process_poll(self, db: Session, scheduled_msg: ScheduledMessage):
+        """Send a scheduled poll to all target groups with delays"""
+        print(f"[SCHEDULER] Processing poll {scheduled_msg.id} for user {scheduled_msg.user_id}", flush=True)
+
+        # Mark as sending
+        scheduled_msg.status = 'sending'
+        db.commit()
+
+        try:
+            group_ids = scheduled_msg.group_ids or []
+            groups_sent = 0
+            groups_failed = 0
+            errors = []
+
+            for i, group_id in enumerate(group_ids):
+                # 30-second delay between groups (except first)
+                if i > 0:
+                    print(f"[SCHEDULER] Waiting 30 seconds before next group...", flush=True)
+                    await asyncio.sleep(30)
+
+                try:
+                    # Get the WhatsApp group ID from the monitored group
+                    group = db.query(MonitoredGroup).filter(
+                        MonitoredGroup.id == group_id,
+                        MonitoredGroup.user_id == scheduled_msg.user_id
+                    ).first()
+
+                    if not group:
+                        errors.append(f"Group {group_id} not found")
+                        groups_failed += 1
+                        continue
+
+                    print(f"[SCHEDULER] Sending poll to group: {group.group_name}", flush=True)
+
+                    # Send the poll with mention support
+                    result = await whatsapp_bridge.send_poll(
+                        user_id=scheduled_msg.user_id,
+                        group_id=group.whatsapp_group_id,
+                        question=scheduled_msg.content,  # Poll question stored in content
+                        options=scheduled_msg.poll_options or [],
+                        allow_multiple_answers=scheduled_msg.poll_allow_multiple or False,
+                        mention_all=(scheduled_msg.mention_type == 'all'),
+                        mention_ids=scheduled_msg.mention_ids if scheduled_msg.mention_type == 'selected' else None
+                    )
+
+                    if result.get('success'):
+                        groups_sent += 1
+                        print(f"[SCHEDULER] Successfully sent poll to {group.group_name}", flush=True)
+
+                        # Notify user of progress via WebSocket
+                        await websocket_manager.send_to_user(scheduled_msg.user_id, {
+                            'type': 'poll_progress',
+                            'message_id': scheduled_msg.id,
+                            'group_name': group.group_name,
+                            'groups_sent': groups_sent,
+                            'total_groups': len(group_ids)
+                        })
+                    else:
+                        groups_failed += 1
+                        error_msg = result.get('error', 'Unknown error')
+                        errors.append(f"{group.group_name}: {error_msg}")
+                        print(f"[SCHEDULER] Failed to send poll to {group.group_name}: {error_msg}", flush=True)
+
+                except Exception as e:
+                    groups_failed += 1
+                    errors.append(f"Group {group_id}: {str(e)}")
+                    print(f"[SCHEDULER] Error sending poll to group {group_id}: {e}", flush=True)
+
+            # Update final status
+            scheduled_msg.groups_sent = groups_sent
+            scheduled_msg.groups_failed = groups_failed
+            scheduled_msg.sent_at = datetime.utcnow()
+
+            if groups_failed == 0:
+                scheduled_msg.status = 'sent'
+            elif groups_sent == 0:
+                scheduled_msg.status = 'failed'
+            else:
+                scheduled_msg.status = 'partially_sent'
+
+            if errors:
+                scheduled_msg.error_message = "; ".join(errors)
+
+            db.commit()
+
+            # Notify user of completion via WebSocket
+            await websocket_manager.send_to_user(scheduled_msg.user_id, {
+                'type': 'poll_complete',
+                'message_id': scheduled_msg.id,
+                'status': scheduled_msg.status,
+                'groups_sent': groups_sent,
+                'groups_failed': groups_failed,
+                'error_message': scheduled_msg.error_message
+            })
+
+            print(f"[SCHEDULER] Poll {scheduled_msg.id} completed: {scheduled_msg.status}", flush=True)
+
+        except Exception as e:
+            print(f"[SCHEDULER] Fatal error processing poll {scheduled_msg.id}: {e}", flush=True)
+            scheduled_msg.status = 'failed'
+            scheduled_msg.error_message = str(e)
+            db.commit()
+
+            # Notify user of failure
+            await websocket_manager.send_to_user(scheduled_msg.user_id, {
+                'type': 'poll_complete',
                 'message_id': scheduled_msg.id,
                 'status': 'failed',
                 'error_message': str(e)

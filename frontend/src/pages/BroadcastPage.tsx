@@ -89,6 +89,11 @@ export default function BroadcastPage() {
   const [pollAllowMultiple, setPollAllowMultiple] = useState(false)
   const [pollSelectedGroups, setPollSelectedGroups] = useState<Group[]>([])
   const [pollGroupsExpanded, setPollGroupsExpanded] = useState(true)
+  const [pollMentionType, setPollMentionType] = useState<MentionType>('none')
+  const [pollSelectedMentionIds, setPollSelectedMentionIds] = useState<string[]>([])
+  const [pollScheduleMode, setPollScheduleMode] = useState(false)
+  const [pollScheduledDateTime, setPollScheduledDateTime] = useState('')
+  const [showPollMembersModal, setShowPollMembersModal] = useState(false)
 
   // Poll progress state
   const [showPollProgressModal, setShowPollProgressModal] = useState(false)
@@ -144,6 +149,34 @@ export default function BroadcastPage() {
       return allMembers.sort((a, b) => a.name.localeCompare(b.name))
     },
     enabled: showMembersModal && selectedGroups.length > 0,
+  })
+
+  // Fetch members for poll selected groups
+  const { data: pollMembersData, isLoading: pollMembersLoading } = useQuery({
+    queryKey: ['poll-members', pollSelectedGroups.map(g => g.whatsapp_group_id)],
+    queryFn: async () => {
+      const allMembers: Member[] = []
+      const seenPhones = new Set<string>()
+
+      for (const group of pollSelectedGroups) {
+        try {
+          const response = await api.getGroupMembers(group.whatsapp_group_id)
+          if (response.members) {
+            for (const member of response.members) {
+              if (!seenPhones.has(member.phone)) {
+                seenPhones.add(member.phone)
+                allMembers.push(member)
+              }
+            }
+          }
+        } catch (error) {
+          console.error(`Failed to get members for group ${group.group_name}:`, error)
+        }
+      }
+
+      return allMembers.sort((a, b) => a.name.localeCompare(b.name))
+    },
+    enabled: showPollMembersModal && pollSelectedGroups.length > 0,
   })
 
   // Send broadcast mutation (text only)
@@ -249,9 +282,21 @@ export default function BroadcastPage() {
       options: string[]
       allow_multiple_answers: boolean
       group_ids: number[]
+      mention_type?: 'none' | 'all' | 'selected'
+      mention_ids?: string[]
+      scheduled_at?: string
     }) => api.sendPollBroadcast(data),
     onSuccess: (result) => {
-      setPollResult(result)
+      if (result.scheduled) {
+        // Scheduled - reset form and show scheduled tab
+        setShowPollProgressModal(false)
+        resetPollForm()
+        refetchScheduled()
+        setActiveTab('scheduled')
+      } else {
+        // Immediate send - wait for WebSocket updates
+        // The WebSocket will update pollResult
+      }
     },
     onError: (error) => {
       setPollResult({
@@ -433,6 +478,10 @@ export default function BroadcastPage() {
     setPollOptions(['', ''])
     setPollAllowMultiple(false)
     setPollSelectedGroups([])
+    setPollMentionType('none')
+    setPollSelectedMentionIds([])
+    setPollScheduleMode(false)
+    setPollScheduledDateTime('')
   }
 
   const handleSendPoll = () => {
@@ -443,12 +492,30 @@ export default function BroadcastPage() {
     setPollProgress(null)
     setPollResult(null)
 
-    sendPollMutation.mutate({
+    const pollData: Parameters<typeof api.sendPollBroadcast>[0] = {
       question: pollQuestion.trim(),
       options: validOptions,
       allow_multiple_answers: pollAllowMultiple,
       group_ids: pollSelectedGroups.map((g) => g.id),
-    })
+      mention_type: pollMentionType,
+    }
+
+    if (pollMentionType === 'selected' && pollSelectedMentionIds.length > 0) {
+      pollData.mention_ids = pollSelectedMentionIds
+    }
+
+    if (pollScheduleMode && pollScheduledDateTime) {
+      pollData.scheduled_at = new Date(pollScheduledDateTime).toISOString()
+    }
+
+    sendPollMutation.mutate(pollData)
+  }
+
+  // Toggle poll member for mentions
+  const togglePollMember = (phone: string) => {
+    setPollSelectedMentionIds((prev) =>
+      prev.includes(phone) ? prev.filter((p) => p !== phone) : [...prev, phone]
+    )
   }
 
   const handlePollProgressClose = () => {
@@ -899,6 +966,99 @@ export default function BroadcastPage() {
               </div>
             </div>
 
+            {/* Poll Mention Options */}
+            <div className="bg-surface rounded-lg p-4">
+              <label className="block text-sm font-medium text-foreground-secondary mb-3">
+                Mentions (Hidden)
+              </label>
+              <p className="text-xs text-muted mb-3">
+                Members will get a notification with @mention, but the poll will appear without visible tags.
+              </p>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  onClick={() => {
+                    setPollMentionType('none')
+                    setPollSelectedMentionIds([])
+                  }}
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                    pollMentionType === 'none'
+                      ? 'bg-primary text-white'
+                      : 'bg-surface-secondary text-foreground-secondary hover:bg-surface-secondary/80'
+                  }`}
+                >
+                  No Mentions
+                </button>
+                <button
+                  onClick={() => {
+                    setPollMentionType('all')
+                    setPollSelectedMentionIds([])
+                  }}
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                    pollMentionType === 'all'
+                      ? 'bg-primary text-white'
+                      : 'bg-surface-secondary text-foreground-secondary hover:bg-surface-secondary/80'
+                  }`}
+                >
+                  Mention All
+                </button>
+                <button
+                  onClick={() => {
+                    if (pollSelectedGroups.length === 0) {
+                      alert('Please select at least one group first')
+                      return
+                    }
+                    setPollMentionType('selected')
+                    setShowPollMembersModal(true)
+                  }}
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                    pollMentionType === 'selected'
+                      ? 'bg-primary text-white'
+                      : 'bg-surface-secondary text-foreground-secondary hover:bg-surface-secondary/80'
+                  }`}
+                >
+                  Select Members
+                  {pollSelectedMentionIds.length > 0 && (
+                    <span className="ml-2 bg-white/20 px-2 py-0.5 rounded-full text-sm">
+                      {pollSelectedMentionIds.length}
+                    </span>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Poll Schedule Options */}
+            <div className="bg-surface rounded-lg p-4">
+              <div className="flex items-center justify-between mb-3">
+                <label className="text-sm font-medium text-foreground-secondary">
+                  Schedule for Later
+                </label>
+                <button
+                  onClick={() => setPollScheduleMode(!pollScheduleMode)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                    pollScheduleMode ? 'bg-primary' : 'bg-surface-secondary'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      pollScheduleMode ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+              {pollScheduleMode && (
+                <div className="flex items-center gap-3">
+                  <Calendar size={20} className="text-muted" />
+                  <input
+                    type="datetime-local"
+                    value={pollScheduledDateTime}
+                    onChange={(e) => setPollScheduledDateTime(e.target.value)}
+                    min={minDateTime}
+                    className="flex-1 px-4 py-2 bg-surface-secondary border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+              )}
+            </div>
+
             {/* Send Poll Button */}
             <div className="flex gap-3">
               <button
@@ -907,14 +1067,20 @@ export default function BroadcastPage() {
                   !pollQuestion.trim() ||
                   pollOptions.filter(opt => opt.trim()).length < 2 ||
                   pollSelectedGroups.length === 0 ||
-                  sendPollMutation.isPending
+                  sendPollMutation.isPending ||
+                  (pollScheduleMode && !pollScheduledDateTime)
                 }
                 className="flex-1 py-3 bg-primary text-white font-medium rounded-lg hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
               >
                 {sendPollMutation.isPending ? (
                   <>
                     <Loader2 size={20} className="animate-spin" />
-                    Sending Poll...
+                    Processing...
+                  </>
+                ) : pollScheduleMode ? (
+                  <>
+                    <Clock size={20} />
+                    Schedule Poll ({pollSelectedGroups.length} groups)
                   </>
                 ) : (
                   <>
@@ -1013,11 +1179,32 @@ export default function BroadcastPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-2">
                     {renderStatusBadge(msg.status)}
+                    {msg.task_type === 'poll' ? (
+                      <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs font-medium">
+                        Poll
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs font-medium">
+                        Broadcast
+                      </span>
+                    )}
                     <span className="text-xs text-muted">
                       Scheduled for {format(new Date(msg.scheduled_at), 'MMM d, yyyy HH:mm')}
                     </span>
                   </div>
-                  <p className="text-foreground mb-2">{msg.content}</p>
+                  <p className="text-foreground mb-2">
+                    {msg.task_type === 'poll' ? `📊 ${msg.content}` : msg.content}
+                  </p>
+                  {msg.poll_options && (
+                    <div className="mb-2 space-y-1">
+                      {msg.poll_options.slice(0, 3).map((opt, i) => (
+                        <p key={i} className="text-sm text-muted">• {opt}</p>
+                      ))}
+                      {msg.poll_options.length > 3 && (
+                        <p className="text-xs text-muted">+{msg.poll_options.length - 3} more options</p>
+                      )}
+                    </div>
+                  )}
                   <div className="flex flex-wrap gap-1">
                     {msg.group_names.map((name, i) => (
                       <span
@@ -1050,7 +1237,7 @@ export default function BroadcastPage() {
                 No Scheduled Messages
               </h3>
               <p className="text-muted">
-                Schedule a message from the Compose tab to see it here.
+                Schedule a message from the Compose or Poll tab to see it here.
               </p>
             </div>
           )}
@@ -1066,6 +1253,15 @@ export default function BroadcastPage() {
                 <div className="flex items-start justify-between gap-4 mb-3">
                   <div className="flex items-center gap-2">
                     {renderStatusBadge(broadcast.status)}
+                    {broadcast.task_type === 'poll' ? (
+                      <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs font-medium">
+                        Poll
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs font-medium">
+                        Broadcast
+                      </span>
+                    )}
                     <span className="text-xs text-muted">
                       {broadcast.sent_at
                         ? format(new Date(broadcast.sent_at), 'MMM d, yyyy HH:mm')
@@ -1078,7 +1274,19 @@ export default function BroadcastPage() {
                     {broadcast.groups_sent}/{broadcast.groups_sent + broadcast.groups_failed} groups
                   </div>
                 </div>
-                <p className="text-foreground mb-3">{broadcast.content}</p>
+                <p className="text-foreground mb-3">
+                  {broadcast.task_type === 'poll' ? `📊 ${broadcast.content}` : broadcast.content}
+                </p>
+                {broadcast.poll_options && (
+                  <div className="mb-3 space-y-1">
+                    {broadcast.poll_options.slice(0, 3).map((opt, i) => (
+                      <p key={i} className="text-sm text-muted">• {opt}</p>
+                    ))}
+                    {broadcast.poll_options.length > 3 && (
+                      <p className="text-xs text-muted">+{broadcast.poll_options.length - 3} more options</p>
+                    )}
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-1 mb-2">
                   {broadcast.group_names.map((name, i) => (
                     <span
@@ -1104,7 +1312,7 @@ export default function BroadcastPage() {
                 No Broadcast History
               </h3>
               <p className="text-muted">
-                Sent broadcasts will appear here.
+                Sent broadcasts and polls will appear here.
               </p>
             </div>
           )}
@@ -1329,6 +1537,74 @@ export default function BroadcastPage() {
                 )}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Poll Members Selection Modal */}
+      {showPollMembersModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-surface rounded-lg border border-border w-full max-w-md max-h-[80vh] flex flex-col">
+            <div className="p-4 border-b border-border flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-foreground">Select Members for Poll</h2>
+                <p className="text-sm text-muted">
+                  Combined members from {pollSelectedGroups.length} group(s)
+                </p>
+              </div>
+              <button
+                onClick={() => setShowPollMembersModal(false)}
+                className="p-2 hover:bg-surface-secondary rounded-lg transition-colors"
+              >
+                <X size={20} className="text-muted" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              {pollMembersLoading ? (
+                <div className="p-8 text-center">
+                  <Loader2 className="animate-spin mx-auto mb-4 text-muted" size={32} />
+                  <p className="text-muted">Loading members...</p>
+                </div>
+              ) : pollMembersData && pollMembersData.length > 0 ? (
+                <div className="divide-y divide-border">
+                  {pollMembersData.map((member) => (
+                    <button
+                      key={member.id}
+                      onClick={() => togglePollMember(member.phone)}
+                      className="w-full p-3 flex items-center gap-3 hover:bg-surface-secondary/50 transition-colors text-left"
+                    >
+                      {pollSelectedMentionIds.includes(member.phone) ? (
+                        <CheckSquare size={20} className="text-primary flex-shrink-0" />
+                      ) : (
+                        <Square size={20} className="text-muted flex-shrink-0" />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-foreground truncate">{member.name}</p>
+                        <p className="text-xs text-muted">{member.phone}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-8 text-center text-muted">
+                  <Users size={32} className="mx-auto mb-2 opacity-50" />
+                  <p>No members found</p>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-border flex items-center justify-between">
+              <p className="text-sm text-muted">
+                {pollSelectedMentionIds.length} selected
+              </p>
+              <button
+                onClick={() => setShowPollMembersModal(false)}
+                className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors"
+              >
+                Done
+              </button>
+            </div>
           </div>
         </div>
       )}

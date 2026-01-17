@@ -187,9 +187,11 @@ class WhatsAppBridge:
         group_id: str,
         question: str,
         options: List[str],
-        allow_multiple_answers: bool = False
+        allow_multiple_answers: bool = False,
+        mention_all: bool = False,
+        mention_ids: Optional[List[str]] = None
     ) -> Dict[str, Any]:
-        """Send a poll to a group"""
+        """Send a poll to a group with optional mentions"""
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.post(
@@ -197,7 +199,9 @@ class WhatsAppBridge:
                     json={
                         "question": question,
                         "options": options,
-                        "allowMultipleAnswers": allow_multiple_answers
+                        "allowMultipleAnswers": allow_multiple_answers,
+                        "mentionAll": mention_all,
+                        "mentionIds": mention_ids or []
                     },
                     timeout=60.0
                 )

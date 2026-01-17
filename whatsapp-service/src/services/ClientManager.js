@@ -791,7 +791,7 @@ class ClientManager {
         }
     }
 
-    async sendPoll(userId, groupId, question, options, allowMultipleAnswers = false) {
+    async sendPoll(userId, groupId, question, options, allowMultipleAnswers = false, mentionOptions = {}) {
         const client = this.clients.get(userId);
         if (!client || this.clientStatus.get(userId) !== 'ready') {
             throw new Error('Client not ready');
@@ -812,14 +812,35 @@ class ClientManager {
                 throw new Error('Poll cannot have more than 12 options');
             }
 
+            // Build mentions array if provided
+            let mentions = [];
+
+            if (mentionOptions.mentionAll) {
+                // Get all participants and add them as mentions
+                if (chat.participants && Array.isArray(chat.participants)) {
+                    mentions = chat.participants.map(p => p.id._serialized);
+                }
+            } else if (mentionOptions.mentionIds && mentionOptions.mentionIds.length > 0) {
+                // Convert phone numbers to WhatsApp IDs
+                mentions = mentionOptions.mentionIds.map(phone => {
+                    // Handle if already has @c.us suffix
+                    if (phone.includes('@')) {
+                        return phone;
+                    }
+                    return `${phone}@c.us`;
+                });
+            }
+
             // Create the poll
             const poll = new Poll(question, options, {
                 allowMultipleAnswers: allowMultipleAnswers
             });
 
-            console.log(`[POLL] Sending poll to ${groupId} for user ${userId}: "${question}" with ${options.length} options`);
+            const sendOptions = mentions.length > 0 ? { mentions } : {};
 
-            const result = await chat.sendMessage(poll);
+            console.log(`[POLL] Sending poll to ${groupId} for user ${userId}: "${question}" with ${options.length} options, ${mentions.length} mentions`);
+
+            const result = await chat.sendMessage(poll, sendOptions);
 
             return {
                 success: true,

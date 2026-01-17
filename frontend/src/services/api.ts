@@ -698,13 +698,20 @@ class ApiClient {
     options: string[]
     allow_multiple_answers: boolean
     group_ids: number[]
+    mention_type?: 'none' | 'all' | 'selected'
+    mention_ids?: string[]
+    scheduled_at?: string
   }) {
     return this.request<{
       success: boolean
-      groups_sent: number
-      groups_failed: number
-      group_names: string[]
-      error_message: string | null
+      message_id?: number
+      scheduled?: boolean
+      scheduled_at?: string
+      groups?: string[]
+      groups_sent?: number
+      groups_failed?: number
+      group_names?: string[]
+      error_message?: string | null
     }>('/api/broadcast/send-poll', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -714,12 +721,14 @@ class ApiClient {
   async getScheduledMessages() {
     return this.request<Array<{
       id: number
+      task_type: string
       content: string
       group_names: string[]
       mention_type: string
       scheduled_at: string
       status: string
       created_at: string
+      poll_options?: string[]
     }>>('/api/broadcast/scheduled')
   }
 
@@ -731,6 +740,7 @@ class ApiClient {
     return this.request<{
       broadcasts: Array<{
         id: number
+        task_type: string
         content: string
         group_names: string[]
         mention_type: string
@@ -741,6 +751,7 @@ class ApiClient {
         groups_failed: number
         error_message: string | null
         created_at: string
+        poll_options?: string[]
       }>
       total: number
     }>(`/api/broadcast/history?${searchParams}`)

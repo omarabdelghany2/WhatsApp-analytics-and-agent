@@ -11,7 +11,7 @@ class ScheduledMessage(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
 
-    # Task type: 'broadcast', 'open_group', 'close_group'
+    # Task type: 'broadcast', 'poll', 'open_group', 'close_group'
     task_type = Column(String(20), default='broadcast', nullable=False)
 
     # Recurring schedule support
@@ -22,6 +22,10 @@ class ScheduledMessage(Base):
     # Message content (optional for group settings tasks)
     content = Column(Text)
     media_path = Column(String(500))  # Path to uploaded media file (for media messages)
+
+    # Poll-specific fields (for task_type='poll')
+    poll_options = Column(JSON)  # List of poll option strings
+    poll_allow_multiple = Column(Boolean, default=False)  # Allow multiple answers
 
     group_ids = Column(JSON, nullable=False)  # List of WhatsApp group IDs to send to
     group_names = Column(JSON)  # List of group names for display
