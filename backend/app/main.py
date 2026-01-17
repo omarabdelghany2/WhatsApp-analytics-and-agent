@@ -4,6 +4,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from contextlib import asynccontextmanager
 import asyncio
 import redis.asyncio as redis
+import os
 
 from app.config import settings
 from app.database import engine, Base, get_db
@@ -15,11 +16,35 @@ from app.core.security import decode_token
 from app.models.user import User
 
 
+def run_migrations():
+    """Run Alembic migrations on startup"""
+    from alembic.config import Config
+    from alembic import command
+
+    # Get the directory where alembic.ini is located
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    alembic_ini = os.path.join(base_dir, "alembic.ini")
+
+    if os.path.exists(alembic_ini):
+        alembic_cfg = Config(alembic_ini)
+        alembic_cfg.set_main_option("script_location", os.path.join(base_dir, "alembic"))
+        try:
+            command.upgrade(alembic_cfg, "head")
+            print("[Startup] Alembic migrations completed")
+        except Exception as e:
+            print(f"[Startup] Alembic migration error: {e}")
+            # Fall back to create_all for new deployments
+            Base.metadata.create_all(bind=engine)
+    else:
+        # No alembic.ini, use create_all
+        Base.metadata.create_all(bind=engine)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    # Create database tables
-    Base.metadata.create_all(bind=engine)
+    # Run database migrations
+    run_migrations()
 
     # Initialize Redis connection
     app.state.redis = redis.from_url(settings.redis_url)
