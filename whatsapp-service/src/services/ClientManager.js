@@ -557,55 +557,80 @@ class ClientManager {
             throw new Error('Client not ready');
         }
 
-        try {
-            const chat = await client.getChatById(groupId);
+        // Retry logic for known whatsapp-web.js timing issues
+        const maxRetries = 3;
+        let lastError;
 
-            if (!chat) {
-                throw new Error('Group not found');
-            }
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                const chat = await client.getChatById(groupId);
 
-            // Build mentions array if provided
-            let mentions = [];
-
-            if (options.mentionAll) {
-                // Get all participants and add them as mentions
-                if (chat.participants && Array.isArray(chat.participants)) {
-                    mentions = chat.participants.map(p => p.id._serialized);
+                if (!chat) {
+                    throw new Error('Group not found');
                 }
-            } else if (options.mentionIds && options.mentionIds.length > 0) {
-                // Convert phone numbers to WhatsApp IDs
-                mentions = options.mentionIds.map(phone => {
-                    // Handle if already has @c.us suffix
-                    if (phone.includes('@')) {
-                        return phone;
+
+                // Small delay to let chat object fully hydrate (fixes markedUnread error)
+                if (attempt > 1) {
+                    await new Promise(r => setTimeout(r, 2000));
+                }
+
+                // Build mentions array if provided
+                let mentions = [];
+
+                if (options.mentionAll) {
+                    // Get all participants and add them as mentions
+                    if (chat.participants && Array.isArray(chat.participants)) {
+                        mentions = chat.participants.map(p => p.id._serialized);
                     }
-                    return `${phone}@c.us`;
-                });
+                } else if (options.mentionIds && options.mentionIds.length > 0) {
+                    // Convert phone numbers to WhatsApp IDs
+                    mentions = options.mentionIds.map(phone => {
+                        // Handle if already has @c.us suffix
+                        if (phone.includes('@')) {
+                            return phone;
+                        }
+                        return `${phone}@c.us`;
+                    });
+                }
+
+                const sendOptions = mentions.length > 0 ? { mentions } : {};
+
+                console.log(`[SEND] Sending message to ${groupId} for user ${userId} with ${mentions.length} mentions (attempt ${attempt})`);
+
+                const result = await chat.sendMessage(content, sendOptions);
+
+                return {
+                    success: true,
+                    messageId: result.id._serialized,
+                    timestamp: result.timestamp,
+                    groupId: groupId
+                };
+            } catch (error) {
+                lastError = error;
+                console.error(`Error sending message to group ${groupId} for user ${userId} (attempt ${attempt}):`, error.message);
+
+                // Handle detached frame error - don't retry
+                if (error.message && error.message.includes('detached Frame')) {
+                    console.log(`[WARN] Session for user ${userId} has invalid frame`);
+                    this.clientStatus.set(userId, 'disconnected');
+                    throw error;
+                }
+
+                // Retry on markedUnread or similar timing errors
+                if (attempt < maxRetries && (
+                    error.message?.includes('markedUnread') ||
+                    error.message?.includes('Cannot read properties of undefined')
+                )) {
+                    console.log(`[RETRY] Will retry in 3 seconds...`);
+                    await new Promise(r => setTimeout(r, 3000));
+                    continue;
+                }
+
+                throw error;
             }
-
-            const sendOptions = mentions.length > 0 ? { mentions } : {};
-
-            console.log(`[SEND] Sending message to ${groupId} for user ${userId} with ${mentions.length} mentions`);
-
-            const result = await chat.sendMessage(content, sendOptions);
-
-            return {
-                success: true,
-                messageId: result.id._serialized,
-                timestamp: result.timestamp,
-                groupId: groupId
-            };
-        } catch (error) {
-            console.error(`Error sending message to group ${groupId} for user ${userId}:`, error);
-
-            // Handle detached frame error
-            if (error.message && error.message.includes('detached Frame')) {
-                console.log(`[WARN] Session for user ${userId} has invalid frame`);
-                this.clientStatus.set(userId, 'disconnected');
-            }
-
-            throw error;
         }
+
+        throw lastError;
     }
 
     async sendMediaMessage(userId, groupId, mediaPath, caption = '', options = {}) {
@@ -614,81 +639,104 @@ class ClientManager {
             throw new Error('Client not ready');
         }
 
-        try {
-            const chat = await client.getChatById(groupId);
-
-            if (!chat) {
-                throw new Error('Group not found');
-            }
-
-            // Check if file exists
-            if (!fs.existsSync(mediaPath)) {
-                throw new Error('Media file not found');
-            }
-
-            // Create MessageMedia from file
-            const media = MessageMedia.fromFilePath(mediaPath);
-
-            // Build mentions array if provided
-            let mentions = [];
-
-            if (options.mentionAll) {
-                if (chat.participants && Array.isArray(chat.participants)) {
-                    mentions = chat.participants.map(p => p.id._serialized);
-                }
-            } else if (options.mentionIds && options.mentionIds.length > 0) {
-                mentions = options.mentionIds.map(phone => {
-                    if (phone.includes('@')) {
-                        return phone;
-                    }
-                    return `${phone}@c.us`;
-                });
-            }
-
-            const sendOptions = {
-                caption: caption || undefined,
-            };
-
-            if (mentions.length > 0) {
-                sendOptions.mentions = mentions;
-            }
-
-            console.log(`[SEND] Sending media to ${groupId} for user ${userId}`);
-
-            const result = await chat.sendMessage(media, sendOptions);
-
-            // Clean up uploaded file after sending
-            try {
-                fs.unlinkSync(mediaPath);
-            } catch (e) {
-                console.log(`[WARN] Could not delete temp file: ${e.message}`);
-            }
-
-            return {
-                success: true,
-                messageId: result.id._serialized,
-                timestamp: result.timestamp,
-                groupId: groupId
-            };
-        } catch (error) {
-            console.error(`Error sending media to group ${groupId} for user ${userId}:`, error);
-
-            // Clean up uploaded file on error
-            try {
-                if (fs.existsSync(mediaPath)) {
-                    fs.unlinkSync(mediaPath);
-                }
-            } catch (e) {
-                // Ignore cleanup errors
-            }
-
-            if (error.message && error.message.includes('detached Frame')) {
-                console.log(`[WARN] Session for user ${userId} has invalid frame`);
-                this.clientStatus.set(userId, 'disconnected');
-            }
-
-            throw error;
+        // Check if file exists before retries
+        if (!fs.existsSync(mediaPath)) {
+            throw new Error('Media file not found');
         }
+
+        // Create MessageMedia from file once
+        const media = MessageMedia.fromFilePath(mediaPath);
+
+        // Retry logic for known whatsapp-web.js timing issues
+        const maxRetries = 3;
+        let lastError;
+
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                const chat = await client.getChatById(groupId);
+
+                if (!chat) {
+                    throw new Error('Group not found');
+                }
+
+                // Small delay to let chat object fully hydrate (fixes markedUnread error)
+                if (attempt > 1) {
+                    await new Promise(r => setTimeout(r, 2000));
+                }
+
+                // Build mentions array if provided
+                let mentions = [];
+
+                if (options.mentionAll) {
+                    if (chat.participants && Array.isArray(chat.participants)) {
+                        mentions = chat.participants.map(p => p.id._serialized);
+                    }
+                } else if (options.mentionIds && options.mentionIds.length > 0) {
+                    mentions = options.mentionIds.map(phone => {
+                        if (phone.includes('@')) {
+                            return phone;
+                        }
+                        return `${phone}@c.us`;
+                    });
+                }
+
+                const sendOptions = {
+                    caption: caption || undefined,
+                };
+
+                if (mentions.length > 0) {
+                    sendOptions.mentions = mentions;
+                }
+
+                console.log(`[SEND] Sending media to ${groupId} for user ${userId} (attempt ${attempt})`);
+
+                const result = await chat.sendMessage(media, sendOptions);
+
+                // Clean up uploaded file after sending
+                try {
+                    fs.unlinkSync(mediaPath);
+                } catch (e) {
+                    console.log(`[WARN] Could not delete temp file: ${e.message}`);
+                }
+
+                return {
+                    success: true,
+                    messageId: result.id._serialized,
+                    timestamp: result.timestamp,
+                    groupId: groupId
+                };
+            } catch (error) {
+                lastError = error;
+                console.error(`Error sending media to group ${groupId} for user ${userId} (attempt ${attempt}):`, error.message);
+
+                // Handle detached frame error - don't retry
+                if (error.message && error.message.includes('detached Frame')) {
+                    console.log(`[WARN] Session for user ${userId} has invalid frame`);
+                    this.clientStatus.set(userId, 'disconnected');
+                    // Clean up file before throwing
+                    try { fs.unlinkSync(mediaPath); } catch (e) {}
+                    throw error;
+                }
+
+                // Retry on markedUnread or similar timing errors
+                if (attempt < maxRetries && (
+                    error.message?.includes('markedUnread') ||
+                    error.message?.includes('Cannot read properties of undefined')
+                )) {
+                    console.log(`[RETRY] Will retry in 3 seconds...`);
+                    await new Promise(r => setTimeout(r, 3000));
+                    continue;
+                }
+
+                // Clean up file before throwing final error
+                try { fs.unlinkSync(mediaPath); } catch (e) {}
+                throw error;
+            }
+        }
+
+        // Clean up file before throwing final error
+        try { fs.unlinkSync(mediaPath); } catch (e) {}
+        throw lastError;
     }
 
     async sendWelcomeMessage(userId, groupId, content, joinerPhones = [], extraMentionPhones = []) {
@@ -797,70 +845,95 @@ class ClientManager {
             throw new Error('Client not ready');
         }
 
-        try {
-            const chat = await client.getChatById(groupId);
-
-            if (!chat) {
-                throw new Error('Group not found');
-            }
-
-            // Validate poll options (WhatsApp requires 2-12 options)
-            if (!options || options.length < 2) {
-                throw new Error('Poll must have at least 2 options');
-            }
-            if (options.length > 12) {
-                throw new Error('Poll cannot have more than 12 options');
-            }
-
-            // Build mentions array if provided
-            let mentions = [];
-
-            if (mentionOptions.mentionAll) {
-                // Get all participants and add them as mentions
-                if (chat.participants && Array.isArray(chat.participants)) {
-                    mentions = chat.participants.map(p => p.id._serialized);
-                }
-            } else if (mentionOptions.mentionIds && mentionOptions.mentionIds.length > 0) {
-                // Convert phone numbers to WhatsApp IDs
-                mentions = mentionOptions.mentionIds.map(phone => {
-                    // Handle if already has @c.us suffix
-                    if (phone.includes('@')) {
-                        return phone;
-                    }
-                    return `${phone}@c.us`;
-                });
-            }
-
-            // Create the poll
-            const poll = new Poll(question, options, {
-                allowMultipleAnswers: allowMultipleAnswers
-            });
-
-            const sendOptions = mentions.length > 0 ? { mentions } : {};
-
-            console.log(`[POLL] Sending poll to ${groupId} for user ${userId}: "${question}" with ${options.length} options, ${mentions.length} mentions`);
-
-            const result = await chat.sendMessage(poll, sendOptions);
-
-            return {
-                success: true,
-                messageId: result.id._serialized,
-                timestamp: result.timestamp,
-                groupId: groupId,
-                question: question,
-                optionsCount: options.length
-            };
-        } catch (error) {
-            console.error(`Error sending poll to group ${groupId} for user ${userId}:`, error);
-
-            // Handle detached frame error
-            if (error.message && error.message.includes('detached Frame')) {
-                console.log(`[WARN] Session for user ${userId} has invalid frame`);
-                this.clientStatus.set(userId, 'disconnected');
-            }
-
-            throw error;
+        // Validate poll options (WhatsApp requires 2-12 options)
+        if (!options || options.length < 2) {
+            throw new Error('Poll must have at least 2 options');
         }
+        if (options.length > 12) {
+            throw new Error('Poll cannot have more than 12 options');
+        }
+
+        // Retry logic for known whatsapp-web.js timing issues
+        const maxRetries = 3;
+        let lastError;
+
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                const chat = await client.getChatById(groupId);
+
+                if (!chat) {
+                    throw new Error('Group not found');
+                }
+
+                // Small delay to let chat object fully hydrate (fixes markedUnread error)
+                if (attempt > 1) {
+                    await new Promise(r => setTimeout(r, 2000));
+                }
+
+                // Build mentions array if provided
+                let mentions = [];
+
+                if (mentionOptions.mentionAll) {
+                    // Get all participants and add them as mentions
+                    if (chat.participants && Array.isArray(chat.participants)) {
+                        mentions = chat.participants.map(p => p.id._serialized);
+                    }
+                } else if (mentionOptions.mentionIds && mentionOptions.mentionIds.length > 0) {
+                    // Convert phone numbers to WhatsApp IDs
+                    mentions = mentionOptions.mentionIds.map(phone => {
+                        // Handle if already has @c.us suffix
+                        if (phone.includes('@')) {
+                            return phone;
+                        }
+                        return `${phone}@c.us`;
+                    });
+                }
+
+                // Create the poll
+                const poll = new Poll(question, options, {
+                    allowMultipleAnswers: allowMultipleAnswers
+                });
+
+                const sendOptions = mentions.length > 0 ? { mentions } : {};
+
+                console.log(`[POLL] Sending poll to ${groupId} for user ${userId}: "${question}" with ${options.length} options, ${mentions.length} mentions (attempt ${attempt})`);
+
+                const result = await chat.sendMessage(poll, sendOptions);
+
+                return {
+                    success: true,
+                    messageId: result.id._serialized,
+                    timestamp: result.timestamp,
+                    groupId: groupId,
+                    question: question,
+                    optionsCount: options.length
+                };
+            } catch (error) {
+                lastError = error;
+                console.error(`Error sending poll to group ${groupId} for user ${userId} (attempt ${attempt}):`, error.message);
+
+                // Handle detached frame error - don't retry
+                if (error.message && error.message.includes('detached Frame')) {
+                    console.log(`[WARN] Session for user ${userId} has invalid frame`);
+                    this.clientStatus.set(userId, 'disconnected');
+                    throw error;
+                }
+
+                // Retry on markedUnread or similar timing errors
+                if (attempt < maxRetries && (
+                    error.message?.includes('markedUnread') ||
+                    error.message?.includes('Cannot read properties of undefined')
+                )) {
+                    console.log(`[RETRY] Will retry in 3 seconds...`);
+                    await new Promise(r => setTimeout(r, 3000));
+                    continue;
+                }
+
+                throw error;
+            }
+        }
+
+        throw lastError;
     }
 
     async destroyClient(userId) {
