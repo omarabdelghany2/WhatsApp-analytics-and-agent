@@ -277,12 +277,12 @@ export default function BroadcastPage() {
     })
 
     const unsubPollProgress = subscribe('poll_progress', (data) => {
-      const progress = data as { group_name: string; groups_sent: number; total_groups: number }
+      const progress = data as unknown as { group_name: string; groups_sent: number; total_groups: number }
       setPollProgress(progress)
     })
 
     const unsubPollComplete = subscribe('poll_complete', (data) => {
-      const result = data as { groups_sent: number; groups_failed: number; error_message: string | null }
+      const result = data as unknown as { groups_sent: number; groups_failed: number; error_message: string | null }
       setPollResult(result)
       setPollProgress(null)
     })
