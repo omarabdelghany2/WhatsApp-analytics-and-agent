@@ -3,6 +3,7 @@ import json
 import redis.asyncio as redis
 from datetime import datetime, date
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.config import settings
 from app.database import SessionLocal
@@ -374,10 +375,16 @@ class RedisSubscriber:
             print(f"[WELCOME] No phone number for joiner, skipping")
             return
 
-        # Get current pending joiners list (ensure it's a list)
-        pending_joiners = group.welcome_pending_joiners or []
-        if not isinstance(pending_joiners, list):
-            pending_joiners = []
+        # IMPORTANT: Refresh group from DB to get latest state (prevents race conditions)
+        db.refresh(group)
+
+        # Get current pending joiners list (create a NEW list to ensure mutation detection)
+        existing_joiners = group.welcome_pending_joiners or []
+        if not isinstance(existing_joiners, list):
+            existing_joiners = []
+
+        # Create a new list (important for SQLAlchemy JSON mutation detection)
+        pending_joiners = list(existing_joiners)
 
         # Add this joiner to pending list if not already there
         if member_phone not in pending_joiners:
@@ -392,17 +399,23 @@ class RedisSubscriber:
         # Update group with new count and pending joiners
         group.welcome_join_count = current_count
         group.welcome_pending_joiners = pending_joiners
+        # Flag the JSON field as modified (SQLAlchemy sometimes doesn't detect list changes)
+        flag_modified(group, 'welcome_pending_joiners')
         db.commit()
 
         # Check if threshold is met
         if current_count >= threshold:
             print(f"[WELCOME] Threshold met for {group.group_name}, sending welcome message")
-            await self.send_welcome_message(db, user_id, group, pending_joiners)
+            # Pass a copy of the list before resetting
+            joiners_to_mention = list(pending_joiners)
 
-            # Reset counter and pending joiners
+            # Reset counter and pending joiners FIRST (in case send takes time)
             group.welcome_join_count = 0
             group.welcome_pending_joiners = []
+            flag_modified(group, 'welcome_pending_joiners')
             db.commit()
+
+            await self.send_welcome_message(db, user_id, group, joiners_to_mention)
 
     async def send_welcome_message(self, db: Session, user_id: int, group: MonitoredGroup, joiner_phones: list):
         """Send the welcome message with mentions"""
