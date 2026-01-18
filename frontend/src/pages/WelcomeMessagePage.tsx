@@ -60,6 +60,7 @@ export default function WelcomeMessagePage() {
   const [part2Enabled, setPart2Enabled] = useState(false)
   const [part2Text, setPart2Text] = useState('')
   const [selectedImage, setSelectedImage] = useState<File | null>(null)
+  const [existingImagePath, setExistingImagePath] = useState<string | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -186,6 +187,7 @@ export default function WelcomeMessagePage() {
     setPart2Enabled(false)
     setPart2Text('')
     setSelectedImage(null)
+    setExistingImagePath(null)
   }
 
   // Edit a specific group - pre-populate form with its settings
@@ -197,7 +199,8 @@ export default function WelcomeMessagePage() {
     setSelectedMemberPhones(group.welcome_extra_mentions || [])
     setPart2Enabled(group.welcome_part2_enabled || false)
     setPart2Text(group.welcome_part2_text || '')
-    setSelectedImage(null) // Can't pre-load existing image file
+    setSelectedImage(null)
+    setExistingImagePath(group.welcome_part2_image || null) // Track existing image
     setShowConfigModal(true)
   }
 
@@ -658,6 +661,29 @@ export default function WelcomeMessagePage() {
                         <label className="block text-sm font-medium text-foreground-secondary mb-2">
                           Part 2: Image (Optional)
                         </label>
+
+                        {/* Show existing image indicator */}
+                        {existingImagePath && !selectedImage && (
+                          <div className="mb-3 p-3 bg-green-500/10 border border-green-500/30 rounded-lg flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <ImageIcon size={20} className="text-green-400" />
+                              <span className="text-sm text-green-400">Image already saved</span>
+                            </div>
+                            <button
+                              onClick={async () => {
+                                if (selectedGroups.length === 1) {
+                                  await deleteImageMutation.mutateAsync(selectedGroups[0])
+                                }
+                                setExistingImagePath(null)
+                              }}
+                              disabled={deleteImageMutation.isPending}
+                              className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50"
+                            >
+                              {deleteImageMutation.isPending ? 'Removing...' : 'Remove'}
+                            </button>
+                          </div>
+                        )}
+
                         <input
                           type="file"
                           ref={fileInputRef}
@@ -673,6 +699,11 @@ export default function WelcomeMessagePage() {
                             <>
                               <Check size={20} className="text-green-400" />
                               {selectedImage.name}
+                            </>
+                          ) : existingImagePath ? (
+                            <>
+                              <Upload size={20} />
+                              Replace Image
                             </>
                           ) : (
                             <>
