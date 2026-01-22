@@ -9,6 +9,7 @@ from app.models.monitored_group import MonitoredGroup
 from app.models.message import Message
 from app.models.event import Event
 from app.models.whatsapp_session import WhatsAppSession
+from app.models.scheduled_message import ScheduledMessage
 from app.schemas.user import UserResponse
 from app.schemas.group import GroupResponse
 from app.schemas.message import MessageList
@@ -116,8 +117,6 @@ def delete_user(
     db: Session = Depends(get_db)
 ):
     """Delete a user and all their data (admin only)"""
-    from app.models.scheduled_message import ScheduledMessage
-
     if user_id == admin.id:
         raise HTTPException(
             status_code=400,
