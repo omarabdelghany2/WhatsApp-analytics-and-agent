@@ -21,7 +21,12 @@ class ScheduledMessage(Base):
 
     # Message content (optional for group settings tasks)
     content = Column(Text)
-    media_path = Column(String(500))  # Path to uploaded media file (for media messages)
+    media_path = Column(String(500))  # Path to uploaded media file (DEPRECATED - use media_base64)
+
+    # Media storage as base64 (persists across redeployments)
+    media_base64 = Column(Text)  # Base64 encoded media data
+    media_mimetype = Column(String(100))  # e.g., 'video/mp4', 'image/jpeg'
+    media_filename = Column(String(255))  # Original filename
 
     # Poll-specific fields (for task_type='poll')
     poll_options = Column(JSON)  # List of poll option strings

@@ -84,7 +84,7 @@ class MessageScheduler:
             groups_sent = 0
             groups_failed = 0
             errors = []
-            has_media = scheduled_msg.media_path and os.path.exists(scheduled_msg.media_path)
+            has_media = bool(scheduled_msg.media_path)  # Media is on WhatsApp service's volume
 
             for i, group_id in enumerate(group_ids):
                 # 30-second delay between groups (except first)
@@ -108,7 +108,8 @@ class MessageScheduler:
 
                     # Send the message (with or without media)
                     if has_media:
-                        result = await whatsapp_bridge.send_media_message(
+                        # Media is on WhatsApp service's volume, use send_media_from_path
+                        result = await whatsapp_bridge.send_media_from_path(
                             user_id=scheduled_msg.user_id,
                             group_id=group.whatsapp_group_id,
                             file_path=scheduled_msg.media_path,
@@ -163,10 +164,10 @@ class MessageScheduler:
             if errors:
                 scheduled_msg.error_message = "; ".join(errors)
 
-            # Clean up media file after broadcast
+            # Clean up media file on WhatsApp service after broadcast
             if has_media:
                 try:
-                    os.remove(scheduled_msg.media_path)
+                    await whatsapp_bridge.delete_media(scheduled_msg.media_path)
                 except Exception:
                     pass
 

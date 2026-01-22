@@ -1,7 +1,5 @@
 import asyncio
 import os
-import shutil
-import uuid
 from datetime import datetime
 from typing import List, Optional
 
@@ -19,10 +17,6 @@ from app.services.whatsapp_bridge import whatsapp_bridge
 from app.services.websocket_manager import websocket_manager
 
 router = APIRouter()
-
-# Create uploads directory for broadcast media
-BROADCAST_UPLOAD_DIR = "/tmp/broadcast_uploads"
-os.makedirs(BROADCAST_UPLOAD_DIR, exist_ok=True)
 
 
 class SendBroadcastRequest(BaseModel):
@@ -68,7 +62,7 @@ async def send_immediate_broadcast(
         groups_sent = 0
         groups_failed = 0
         errors = []
-        has_media = scheduled_msg.media_path and os.path.exists(scheduled_msg.media_path)
+        has_media = bool(scheduled_msg.media_path)  # Media is on WhatsApp service's volume
 
         # Mark as sending
         scheduled_msg.status = 'sending'
@@ -93,7 +87,8 @@ async def send_immediate_broadcast(
 
                 # Send the message (with or without media)
                 if has_media:
-                    result = await whatsapp_bridge.send_media_message(
+                    # Media is on WhatsApp service's volume, use send_media_from_path
+                    result = await whatsapp_bridge.send_media_from_path(
                         user_id=user_id,
                         group_id=group.whatsapp_group_id,
                         file_path=scheduled_msg.media_path,
@@ -145,10 +140,10 @@ async def send_immediate_broadcast(
         if errors:
             scheduled_msg.error_message = "; ".join(errors)
 
-        # Clean up media file after broadcast
+        # Clean up media file on WhatsApp service after broadcast
         if has_media:
             try:
-                os.remove(scheduled_msg.media_path)
+                await whatsapp_bridge.delete_media(scheduled_msg.media_path)
             except Exception:
                 pass
 
@@ -374,6 +369,8 @@ async def send_broadcast_with_media(
 ):
     """Send a broadcast message with media to multiple groups (immediate or scheduled)"""
     import json
+    import tempfile
+    import shutil
 
     # Parse group_ids from JSON string
     try:
@@ -410,13 +407,26 @@ async def send_broadcast_with_media(
 
     group_names = [g.group_name for g in groups]
 
-    # Save uploaded file
+    # Save uploaded file temporarily
     file_extension = os.path.splitext(media.filename)[1] if media.filename else ""
-    temp_filename = f"{uuid.uuid4()}{file_extension}"
-    temp_filepath = os.path.join(BROADCAST_UPLOAD_DIR, temp_filename)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
+        shutil.copyfileobj(media.file, temp_file)
+        temp_filepath = temp_file.name
 
-    with open(temp_filepath, "wb") as buffer:
-        shutil.copyfileobj(media.file, buffer)
+    # Upload media to WhatsApp service's persistent volume
+    try:
+        upload_result = await whatsapp_bridge.upload_media(temp_filepath)
+        if not upload_result.get('success'):
+            os.remove(temp_filepath)
+            raise HTTPException(status_code=500, detail=f"Failed to upload media: {upload_result.get('error')}")
+
+        # Get the path on WhatsApp service's volume
+        remote_media_path = upload_result.get('filePath')
+        print(f"[BROADCAST] Media uploaded to WhatsApp service: {remote_media_path}", flush=True)
+    finally:
+        # Clean up local temp file
+        if os.path.exists(temp_filepath):
+            os.remove(temp_filepath)
 
     # Determine scheduled time
     parsed_scheduled_at = None
@@ -427,21 +437,22 @@ async def send_broadcast_with_media(
             # Remove timezone info for consistent comparison with utcnow()
             parsed_scheduled_at = parsed_scheduled_at.replace(tzinfo=None)
             if parsed_scheduled_at <= datetime.utcnow():
-                os.remove(temp_filepath)
+                # Clean up remote media
+                await whatsapp_bridge.delete_media(remote_media_path)
                 raise HTTPException(status_code=400, detail="Scheduled time must be in the future")
         except ValueError:
-            os.remove(temp_filepath)
+            await whatsapp_bridge.delete_media(remote_media_path)
             raise HTTPException(status_code=400, detail="Invalid scheduled_at format")
 
     final_scheduled_at = parsed_scheduled_at if parsed_scheduled_at else datetime.utcnow()
     # Set status to 'sending' for immediate sends so scheduler doesn't pick it up
     status_val = 'pending' if parsed_scheduled_at else 'sending'
 
-    # Create scheduled message record
+    # Create scheduled message record with remote path
     scheduled_msg = ScheduledMessage(
         user_id=current_user.id,
         content=content or "",
-        media_path=temp_filepath,
+        media_path=remote_media_path,  # Store path on WhatsApp service's volume
         group_ids=parsed_group_ids,
         group_names=group_names,
         mention_type=mention_type,

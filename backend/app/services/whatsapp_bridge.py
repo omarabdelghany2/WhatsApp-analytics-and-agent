@@ -209,6 +209,62 @@ class WhatsAppBridge:
             except httpx.RequestError as e:
                 return {"success": False, "error": str(e)}
 
+    async def upload_media(self, file_path: str) -> Dict[str, Any]:
+        """Upload media to WhatsApp service's persistent volume for scheduled broadcasts"""
+        async with httpx.AsyncClient() as client:
+            try:
+                filename = os.path.basename(file_path)
+                with open(file_path, 'rb') as f:
+                    files = {'media': (filename, f, 'application/octet-stream')}
+                    response = await client.post(
+                        f"{self.base_url}/api/clients/upload-media",
+                        files=files,
+                        timeout=120.0
+                    )
+                    return response.json()
+            except httpx.RequestError as e:
+                return {"success": False, "error": str(e)}
+
+    async def send_media_from_path(
+        self,
+        user_id: int,
+        group_id: str,
+        file_path: str,
+        caption: str = "",
+        mention_all: bool = False,
+        mention_ids: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """Send media from a stored path on WhatsApp service"""
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    f"{self.base_url}/api/clients/{user_id}/groups/{group_id}/send-media-from-path",
+                    json={
+                        "filePath": file_path,
+                        "caption": caption,
+                        "mentionAll": mention_all,
+                        "mentionIds": mention_ids or []
+                    },
+                    timeout=120.0
+                )
+                return response.json()
+            except httpx.RequestError as e:
+                return {"success": False, "error": str(e)}
+
+    async def delete_media(self, file_path: str) -> Dict[str, Any]:
+        """Delete media file from WhatsApp service after broadcast"""
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.request(
+                    "DELETE",
+                    f"{self.base_url}/api/clients/media",
+                    json={"filePath": file_path},
+                    timeout=30.0
+                )
+                return response.json()
+            except httpx.RequestError as e:
+                return {"success": False, "error": str(e)}
+
 
 # Singleton instance
 whatsapp_bridge = WhatsAppBridge()

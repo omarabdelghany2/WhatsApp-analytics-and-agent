@@ -3,8 +3,9 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-// Configure multer for file uploads
-const uploadDir = path.join(__dirname, '../../uploads');
+// Configure multer for file uploads - use data dir for persistence
+const dataDir = process.env.DATA_DIR || './data';
+const uploadDir = path.join(dataDir, 'broadcast_media');
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
 }
@@ -242,6 +243,83 @@ module.exports = (clientManager) => {
             res.json({ success: true });
         } catch (error) {
             console.error('Error logging out:', error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // Upload media for scheduled broadcast (stores on volume, returns path)
+    router.post('/upload-media', upload.single('media'), async (req, res) => {
+        try {
+            if (!req.file) {
+                return res.status(400).json({ success: false, error: 'Media file is required' });
+            }
+
+            console.log(`[UPLOAD] Media uploaded: ${req.file.path}`);
+            res.json({
+                success: true,
+                filePath: req.file.path,
+                filename: req.file.filename,
+                mimetype: req.file.mimetype,
+                size: req.file.size
+            });
+        } catch (error) {
+            console.error('Error uploading media:', error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // Send media from stored path (for scheduled broadcasts)
+    router.post('/:userId/groups/:groupId/send-media-from-path', async (req, res) => {
+        try {
+            const userId = parseInt(req.params.userId);
+            const groupId = req.params.groupId;
+            const { filePath, caption, mentionAll, mentionIds } = req.body;
+
+            if (!filePath) {
+                return res.status(400).json({ success: false, error: 'filePath is required' });
+            }
+
+            if (!fs.existsSync(filePath)) {
+                return res.status(404).json({ success: false, error: 'Media file not found' });
+            }
+
+            const result = await clientManager.sendMediaMessage(userId, groupId, filePath, caption || '', {
+                mentionAll: mentionAll || false,
+                mentionIds: mentionIds || []
+            });
+
+            // Delete file after sending (optional - comment out to keep)
+            // try { fs.unlinkSync(filePath); } catch (e) {}
+
+            res.json(result);
+        } catch (error) {
+            console.error('Error sending media from path:', error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // Delete media file (cleanup after broadcast)
+    router.delete('/media', async (req, res) => {
+        try {
+            const { filePath } = req.body;
+
+            if (!filePath) {
+                return res.status(400).json({ success: false, error: 'filePath is required' });
+            }
+
+            // Security: only allow deleting from upload directory
+            if (!filePath.startsWith(uploadDir)) {
+                return res.status(403).json({ success: false, error: 'Invalid file path' });
+            }
+
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+                console.log(`[CLEANUP] Deleted media: ${filePath}`);
+            }
+
+            res.json({ success: true });
+        } catch (error) {
+            console.error('Error deleting media:', error);
             res.status(500).json({ success: false, error: error.message });
         }
     });
