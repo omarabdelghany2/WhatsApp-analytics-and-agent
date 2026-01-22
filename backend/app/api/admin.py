@@ -117,6 +117,8 @@ def delete_user(
     db: Session = Depends(get_db)
 ):
     """Delete a user and all their data (admin only)"""
+    print(f"[ADMIN] Delete user request for user_id: {user_id}", flush=True)
+
     if user_id == admin.id:
         raise HTTPException(
             status_code=400,
@@ -127,18 +129,31 @@ def delete_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Cancel any pending/sending scheduled messages first
-    # This prevents the scheduler from processing them while we delete
-    db.query(ScheduledMessage).filter(
-        ScheduledMessage.user_id == user_id,
-        ScheduledMessage.status.in_(['pending', 'sending'])
-    ).update({'status': 'cancelled'}, synchronize_session=False)
+    try:
+        username = user.username
 
-    # Delete user (cascades to related records)
-    db.delete(user)
-    db.commit()
+        # Cancel any pending/sending scheduled messages first
+        print(f"[ADMIN] Cancelling scheduled messages for user {user_id}", flush=True)
+        db.query(ScheduledMessage).filter(
+            ScheduledMessage.user_id == user_id,
+            ScheduledMessage.status.in_(['pending', 'sending'])
+        ).update({'status': 'cancelled'}, synchronize_session=False)
 
-    return {"success": True, "message": f"User {user.username} deleted"}
+        # Delete user (cascades to related records)
+        print(f"[ADMIN] Deleting user {user_id}", flush=True)
+        db.delete(user)
+        db.commit()
+
+        print(f"[ADMIN] User {username} (id: {user_id}) deleted successfully", flush=True)
+        return {"success": True, "message": f"User {username} deleted"}
+
+    except Exception as e:
+        db.rollback()
+        print(f"[ADMIN] Error deleting user {user_id}: {str(e)}", flush=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete user: {str(e)}"
+        )
 
 
 @router.get("/users/{user_id}/groups", response_model=List[GroupResponse])
