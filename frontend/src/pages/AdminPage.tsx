@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
@@ -12,17 +12,33 @@ import {
   MessageSquare,
   Award,
   ChevronRight,
+  Trash2,
 } from 'lucide-react'
 
 export default function AdminPage() {
   const { user, logout } = useAuth()
   const { setViewingUser } = useAdmin()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
 
   const { data: users, isLoading } = useQuery({
     queryKey: ['admin-users'],
     queryFn: () => api.getAdminUsers(),
   })
+
+  const deleteMutation = useMutation({
+    mutationFn: (userId: number) => api.deleteUser(userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+    }
+  })
+
+  const handleDeleteUser = (e: React.MouseEvent, account: typeof regularUsers[0]) => {
+    e.stopPropagation()
+    if (window.confirm(`Delete "${account.username}"?\n\nThis permanently deletes all their data including messages, events, and scheduled broadcasts.`)) {
+      deleteMutation.mutate(account.id)
+    }
+  }
 
   // Filter out admin users - only show regular accounts
   const regularUsers = users?.filter(u => !u.is_admin) || []
@@ -178,6 +194,16 @@ export default function AdminPage() {
                       <p className="text-muted text-xs">Certs</p>
                     </div>
                   </div>
+
+                  {/* Delete Button */}
+                  <button
+                    onClick={(e) => handleDeleteUser(e, account)}
+                    disabled={deleteMutation.isPending}
+                    className="p-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors"
+                    title="Delete account"
+                  >
+                    <Trash2 size={18} />
+                  </button>
 
                   {/* Arrow */}
                   <ChevronRight size={20} className="text-muted" />

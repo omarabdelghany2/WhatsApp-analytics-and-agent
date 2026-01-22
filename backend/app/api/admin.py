@@ -115,7 +115,9 @@ def delete_user(
     admin: User = Depends(get_admin_user),
     db: Session = Depends(get_db)
 ):
-    """Delete a user (admin only)"""
+    """Delete a user and all their data (admin only)"""
+    from app.models.scheduled_message import ScheduledMessage
+
     if user_id == admin.id:
         raise HTTPException(
             status_code=400,
@@ -126,11 +128,18 @@ def delete_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # Cancel any pending/sending scheduled messages first
+    # This prevents the scheduler from processing them while we delete
+    db.query(ScheduledMessage).filter(
+        ScheduledMessage.user_id == user_id,
+        ScheduledMessage.status.in_(['pending', 'sending'])
+    ).update({'status': 'cancelled'}, synchronize_session=False)
+
     # Delete user (cascades to related records)
     db.delete(user)
     db.commit()
 
-    return {"success": True, "message": f"User {user_id} deleted"}
+    return {"success": True, "message": f"User {user.username} deleted"}
 
 
 @router.get("/users/{user_id}/groups", response_model=List[GroupResponse])
