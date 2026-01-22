@@ -912,6 +912,30 @@ class ClientManager {
         }
     }
 
+    /**
+     * Delete user session files from disk (for when user is deleted from database)
+     */
+    async deleteUserSession(userId) {
+        // First destroy the client if running
+        await this.destroyClient(userId);
+
+        const sessionPath = path.join(this.dataDir, '.wwebjs_auth', `session-user_${userId}`);
+
+        if (fs.existsSync(sessionPath)) {
+            try {
+                fs.rmSync(sessionPath, { recursive: true, force: true });
+                console.log(`[CLEANUP] Deleted session files for user ${userId}`);
+                return { success: true, message: `Session files deleted for user ${userId}` };
+            } catch (error) {
+                console.error(`[CLEANUP] Error deleting session files for user ${userId}:`, error);
+                return { success: false, error: error.message };
+            }
+        } else {
+            console.log(`[CLEANUP] No session files found for user ${userId}`);
+            return { success: true, message: 'No session files found' };
+        }
+    }
+
     async destroyAll() {
         console.log('Destroying all clients...');
         for (const userId of this.clients.keys()) {

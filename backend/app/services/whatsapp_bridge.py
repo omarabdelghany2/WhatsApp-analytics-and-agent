@@ -265,6 +265,18 @@ class WhatsAppBridge:
             except httpx.RequestError as e:
                 return {"success": False, "error": str(e)}
 
+    async def delete_user_session(self, user_id: int) -> Dict[str, Any]:
+        """Delete user session files from WhatsApp service (for user deletion)"""
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.delete(
+                    f"{self.base_url}/api/clients/{user_id}/session",
+                    timeout=30.0
+                )
+                return response.json()
+            except httpx.RequestError as e:
+                return {"success": False, "error": str(e)}
+
 
 # Singleton instance
 whatsapp_bridge = WhatsAppBridge()

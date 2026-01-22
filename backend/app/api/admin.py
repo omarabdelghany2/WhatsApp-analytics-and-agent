@@ -111,12 +111,14 @@ def toggle_admin(
 
 
 @router.delete("/users/{user_id}")
-def delete_user(
+async def delete_user(
     user_id: int,
     admin: User = Depends(get_admin_user),
     db: Session = Depends(get_db)
 ):
     """Delete a user and all their data (admin only)"""
+    from app.services.whatsapp_bridge import whatsapp_bridge
+
     print(f"[ADMIN] Delete user request for user_id: {user_id}", flush=True)
 
     if user_id == admin.id:
@@ -143,6 +145,13 @@ def delete_user(
         print(f"[ADMIN] Deleting user {user_id}", flush=True)
         db.delete(user)
         db.commit()
+
+        # Delete WhatsApp session files from WhatsApp service
+        print(f"[ADMIN] Deleting WhatsApp session for user {user_id}", flush=True)
+        try:
+            await whatsapp_bridge.delete_user_session(user_id)
+        except Exception as e:
+            print(f"[ADMIN] Warning: Could not delete WhatsApp session: {e}", flush=True)
 
         print(f"[ADMIN] User {username} (id: {user_id}) deleted successfully", flush=True)
         return {"success": True, "message": f"User {username} deleted"}

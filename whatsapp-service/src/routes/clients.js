@@ -247,6 +247,19 @@ module.exports = (clientManager) => {
         }
     });
 
+    // Delete user session files (for when user is deleted from database)
+    router.delete('/:userId/session', async (req, res) => {
+        try {
+            const userId = parseInt(req.params.userId);
+            console.log(`[API] Delete session request for user ${userId}`);
+            const result = await clientManager.deleteUserSession(userId);
+            res.json(result);
+        } catch (error) {
+            console.error('Error deleting session:', error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
     // Upload media for scheduled broadcast (stores on volume, returns path)
     router.post('/upload-media', upload.single('media'), async (req, res) => {
         try {
