@@ -16,10 +16,10 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
-    # Relationships
-    whatsapp_session = relationship("WhatsAppSession", back_populates="user", uselist=False)
-    monitored_groups = relationship("MonitoredGroup", back_populates="user")
-    messages = relationship("Message", back_populates="user")
-    events = relationship("Event", back_populates="user")
-    scheduled_messages = relationship("ScheduledMessage", back_populates="user")
-    agents = relationship("Agent", back_populates="user")
+    # Relationships - cascade delete all related records when user is deleted
+    whatsapp_session = relationship("WhatsAppSession", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    monitored_groups = relationship("MonitoredGroup", back_populates="user", cascade="all, delete-orphan")
+    messages = relationship("Message", back_populates="user", cascade="all, delete-orphan")
+    events = relationship("Event", back_populates="user", cascade="all, delete-orphan")
+    scheduled_messages = relationship("ScheduledMessage", back_populates="user", cascade="all, delete-orphan")
+    agents = relationship("Agent", back_populates="user", cascade="all, delete-orphan")
