@@ -8,6 +8,7 @@ class ClientManager {
         this.clients = new Map();       // userId -> Client
         this.clientStatus = new Map();  // userId -> status
         this.qrCodes = new Map();       // userId -> qrCode
+        this.qrTimeouts = new Map();    // userId -> timeoutId (for QR cleanup)
         this.redisPublisher = redisPublisher;
         this.dataDir = dataDir;
 
@@ -123,6 +124,28 @@ class ClientManager {
             this.qrCodes.set(userId, qr);
             this.clientStatus.set(userId, 'qr_ready');
 
+            // Clear any existing QR timeout
+            if (this.qrTimeouts.has(userId)) {
+                clearTimeout(this.qrTimeouts.get(userId));
+            }
+
+            // Set timeout to auto-destroy client if QR not scanned within 5 minutes
+            const timeoutId = setTimeout(async () => {
+                if (this.clientStatus.get(userId) === 'qr_ready') {
+                    console.log(`[CLEANUP] QR timeout for user ${userId} - destroying unused client`);
+                    await this.destroyClient(userId);
+
+                    // Notify frontend that session timed out
+                    this.redisPublisher.publish('whatsapp:events', {
+                        type: 'qr_timeout',
+                        userId
+                    });
+                }
+                this.qrTimeouts.delete(userId);
+            }, 5 * 60 * 1000); // 5 minutes
+
+            this.qrTimeouts.set(userId, timeoutId);
+
             this.redisPublisher.publish('whatsapp:events', {
                 type: 'qr',
                 userId,
@@ -134,6 +157,12 @@ class ClientManager {
             console.log(`User ${userId} authenticated`);
             this.qrCodes.delete(userId);
             this.clientStatus.set(userId, 'authenticated');
+
+            // Clear QR timeout since user authenticated successfully
+            if (this.qrTimeouts.has(userId)) {
+                clearTimeout(this.qrTimeouts.get(userId));
+                this.qrTimeouts.delete(userId);
+            }
 
             this.redisPublisher.publish('whatsapp:events', {
                 type: 'authenticated',
@@ -874,6 +903,12 @@ class ClientManager {
             this.clients.delete(userId);
             this.clientStatus.delete(userId);
             this.qrCodes.delete(userId);
+
+            // Clear QR timeout if exists
+            if (this.qrTimeouts.has(userId)) {
+                clearTimeout(this.qrTimeouts.get(userId));
+                this.qrTimeouts.delete(userId);
+            }
         }
     }
 
