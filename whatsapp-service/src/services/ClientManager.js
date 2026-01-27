@@ -30,7 +30,18 @@ class ClientManager {
                 return { success: true, status, message: 'Client already connected' };
             }
 
-            // Destroy and recreate if in bad state
+            // If QR is ready or initializing, don't recreate - just return current state
+            if (status === 'qr_ready') {
+                const qr = this.qrCodes.get(userId);
+                return { success: true, status, message: 'QR code already available', qr };
+            }
+
+            if (status === 'initializing') {
+                return { success: true, status, message: 'Client is initializing, please wait' };
+            }
+
+            // Only destroy and recreate if in bad state (failed, disconnected)
+            console.log(`[INIT] Destroying client in bad state: ${status}`);
             await this.destroyClient(userId);
         }
 
@@ -735,6 +746,7 @@ class ClientManager {
             const extraMentionNames = [];
 
             // Process joiner phones (will appear at the start)
+            // Note: Using ID strings instead of Contact objects (Contact array is deprecated)
             for (const phone of joinerPhones) {
                 if (!phone) continue;
 
@@ -742,17 +754,9 @@ class ClientManager {
                 const cleanPhone = phone.replace(/[^\d]/g, '');
                 const contactId = `${cleanPhone}@c.us`;
 
-                try {
-                    // Get the contact to have a clickable mention
-                    const contact = await client.getContactById(contactId);
-                    mentions.push(contact);
-                    joinerMentionNames.push(`@${cleanPhone}`);
-                } catch (e) {
-                    // If we can't get the contact, still add the ID
-                    console.log(`[WELCOME] Could not get contact for ${phone}, adding raw ID`);
-                    mentions.push(contactId);
-                    joinerMentionNames.push(`@${cleanPhone}`);
-                }
+                // Always use contactId string (not Contact object) to avoid deprecation warning
+                mentions.push(contactId);
+                joinerMentionNames.push(`@${cleanPhone}`);
             }
 
             // Process extra mention phones (will appear at the end after text)
@@ -762,15 +766,9 @@ class ClientManager {
                 const cleanPhone = phone.replace(/[^\d]/g, '');
                 const contactId = `${cleanPhone}@c.us`;
 
-                try {
-                    const contact = await client.getContactById(contactId);
-                    mentions.push(contact);
-                    extraMentionNames.push(`@${cleanPhone}`);
-                } catch (e) {
-                    console.log(`[WELCOME] Could not get contact for extra mention ${phone}, adding raw ID`);
-                    mentions.push(contactId);
-                    extraMentionNames.push(`@${cleanPhone}`);
-                }
+                // Always use contactId string (not Contact object) to avoid deprecation warning
+                mentions.push(contactId);
+                extraMentionNames.push(`@${cleanPhone}`);
             }
 
             // Build the message: @joiners + text + @extraMentions
