@@ -12,6 +12,7 @@ class ClientManager {
         this.operationQueues = new Map(); // userId -> Promise (for serializing operations)
         this.groupsCache = new Map();   // userId -> { groups: [], timestamp: Date }
         this.GROUPS_CACHE_TTL = 60000;  // Cache groups for 60 seconds
+        this.MAX_CONCURRENT_CLIENTS = parseInt(process.env.MAX_CONCURRENT_CLIENTS) || 3; // Limit concurrent browsers
         this.redisPublisher = redisPublisher;
         this.dataDir = dataDir;
 
@@ -19,6 +20,19 @@ class ClientManager {
         if (!fs.existsSync(dataDir)) {
             fs.mkdirSync(dataDir, { recursive: true });
         }
+    }
+
+    /**
+     * Count currently active (initializing or ready) clients
+     */
+    getActiveClientCount() {
+        let count = 0;
+        for (const status of this.clientStatus.values()) {
+            if (status === 'initializing' || status === 'ready' || status === 'qr_ready' || status === 'authenticated') {
+                count++;
+            }
+        }
+        return count;
     }
 
     /**
@@ -69,6 +83,17 @@ class ClientManager {
             // Only destroy and recreate if in bad state (failed, disconnected)
             console.log(`[INIT] Destroying client in bad state: ${status}`);
             await this.destroyClient(userId);
+        }
+
+        // Check concurrent client limit (skip check if this user already has a slot)
+        const activeCount = this.getActiveClientCount();
+        if (activeCount >= this.MAX_CONCURRENT_CLIENTS) {
+            console.log(`[INIT] Concurrent client limit reached (${activeCount}/${this.MAX_CONCURRENT_CLIENTS}). User ${userId} queued.`);
+            return {
+                success: false,
+                status: 'queued',
+                message: `Server is at capacity (${this.MAX_CONCURRENT_CLIENTS} active sessions). Please try again later.`
+            };
         }
 
         const authPath = path.join(this.dataDir, '.wwebjs_auth');
@@ -151,7 +176,22 @@ class ClientManager {
         }
 
         console.error(`[INIT] All attempts failed for user ${userId}:`, lastError?.message);
+
+        // Clean up the failed client to free resources
+        try {
+            const failedClient = this.clients.get(userId);
+            if (failedClient) {
+                await failedClient.destroy().catch(() => {});
+            }
+        } catch (e) {
+            // Ignore cleanup errors
+        }
+
+        // Remove from maps to free up concurrent slot
+        this.clients.delete(userId);
         this.clientStatus.set(userId, 'failed');
+        this.qrCodes.delete(userId);
+
         return { success: false, status: 'failed', message: lastError?.message || 'Initialization failed' };
     }
 
@@ -1039,6 +1079,7 @@ class ClientManager {
     }
 
     // Auto-restore previously authenticated sessions on startup
+    // Only restores up to MAX_CONCURRENT_CLIENTS to avoid resource exhaustion
     async restoreSessions() {
         const authPath = path.join(this.dataDir, '.wwebjs_auth');
 
@@ -1059,29 +1100,65 @@ class ClientManager {
             });
 
             console.log(`[RESTORE] ${authenticatedSessions.length} sessions have valid authentication data`);
+            console.log(`[RESTORE] Will restore up to ${this.MAX_CONCURRENT_CLIENTS} sessions (limit)`);
+
+            let restoredCount = 0;
+            let failedCount = 0;
 
             for (let i = 0; i < authenticatedSessions.length; i++) {
+                // Stop if we've reached the concurrent limit
+                if (restoredCount >= this.MAX_CONCURRENT_CLIENTS) {
+                    console.log(`[RESTORE] Reached concurrent limit (${this.MAX_CONCURRENT_CLIENTS}). Remaining ${authenticatedSessions.length - i} sessions will be restored on-demand.`);
+                    break;
+                }
+
                 const sessionDir = authenticatedSessions[i];
                 // Extract user ID from directory name (session-user_X)
                 const match = sessionDir.match(/session-user_(\d+)/);
                 if (match) {
                     const userId = parseInt(match[1], 10);
-                    console.log(`[RESTORE] Restoring session for user ${userId}...`);
+                    console.log(`[RESTORE] Restoring session ${i + 1}/${Math.min(authenticatedSessions.length, this.MAX_CONCURRENT_CLIENTS)} for user ${userId}...`);
 
                     try {
-                        await this.initializeClient(userId);
-                        console.log(`[RESTORE] Session restored for user ${userId}`);
+                        const result = await this.initializeClient(userId);
+                        if (result.success) {
+                            restoredCount++;
+                            console.log(`[RESTORE] Session initiated for user ${userId}`);
+
+                            // Wait for client to be ready (with timeout)
+                            const readyTimeout = 90000; // 90 seconds max wait
+                            const startTime = Date.now();
+                            while (Date.now() - startTime < readyTimeout) {
+                                const status = this.clientStatus.get(userId);
+                                if (status === 'ready') {
+                                    console.log(`[RESTORE] User ${userId} is ready`);
+                                    break;
+                                }
+                                if (status === 'failed' || status === 'disconnected') {
+                                    console.log(`[RESTORE] User ${userId} failed to connect: ${status}`);
+                                    failedCount++;
+                                    restoredCount--; // Free up the slot
+                                    break;
+                                }
+                                await new Promise(resolve => setTimeout(resolve, 5000)); // Check every 5 seconds
+                            }
+                        } else {
+                            console.log(`[RESTORE] Could not restore user ${userId}: ${result.message}`);
+                        }
                     } catch (error) {
                         console.error(`[RESTORE] Failed to restore session for user ${userId}:`, error.message);
+                        failedCount++;
                     }
 
-                    // Wait 30 seconds between session restorations to avoid overwhelming puppeteer
-                    if (i < authenticatedSessions.length - 1) {
-                        console.log('[RESTORE] Waiting 30 seconds before next session...');
-                        await new Promise(resolve => setTimeout(resolve, 30000));
+                    // Wait 60 seconds between session restorations to let system stabilize
+                    if (i < authenticatedSessions.length - 1 && restoredCount < this.MAX_CONCURRENT_CLIENTS) {
+                        console.log('[RESTORE] Waiting 60 seconds before next session...');
+                        await new Promise(resolve => setTimeout(resolve, 60000));
                     }
                 }
             }
+
+            console.log(`[RESTORE] Complete. Restored: ${restoredCount}, Failed: ${failedCount}, Pending: ${authenticatedSessions.length - restoredCount - failedCount}`);
         } catch (error) {
             console.error('[RESTORE] Error restoring sessions:', error);
         }

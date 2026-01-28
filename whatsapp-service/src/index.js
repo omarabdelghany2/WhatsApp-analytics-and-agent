@@ -31,6 +31,7 @@ app.listen(PORT, async () => {
     console.log(`WhatsApp service running on port ${PORT}`);
     console.log(`Redis URL: ${REDIS_URL}`);
     console.log(`Data directory: ${DATA_DIR}`);
+    console.log(`Max concurrent clients: ${clientManager.MAX_CONCURRENT_CLIENTS}`);
 
     // Auto-restore previously authenticated WhatsApp sessions
     console.log('Checking for saved WhatsApp sessions...');
