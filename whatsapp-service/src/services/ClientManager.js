@@ -9,12 +9,38 @@ class ClientManager {
         this.clientStatus = new Map();  // userId -> status
         this.qrCodes = new Map();       // userId -> qrCode
         this.qrTimeouts = new Map();    // userId -> timeoutId (for QR cleanup)
+        this.operationQueues = new Map(); // userId -> Promise (for serializing operations)
+        this.groupsCache = new Map();   // userId -> { groups: [], timestamp: Date }
+        this.GROUPS_CACHE_TTL = 60000;  // Cache groups for 60 seconds
         this.redisPublisher = redisPublisher;
         this.dataDir = dataDir;
 
         // Ensure data directory exists
         if (!fs.existsSync(dataDir)) {
             fs.mkdirSync(dataDir, { recursive: true });
+        }
+    }
+
+    /**
+     * Queue an operation for a specific client to prevent concurrent Puppeteer calls
+     * This serializes all operations per client to avoid timeout issues
+     */
+    async _queueOperation(userId, operation) {
+        const currentQueue = this.operationQueues.get(userId) || Promise.resolve();
+
+        const newQueue = currentQueue
+            .catch(() => {}) // Ignore previous errors
+            .then(() => operation());
+
+        this.operationQueues.set(userId, newQueue);
+
+        try {
+            return await newQueue;
+        } finally {
+            // Clean up queue reference if this was the last operation
+            if (this.operationQueues.get(userId) === newQueue) {
+                this.operationQueues.delete(userId);
+            }
         }
     }
 
@@ -459,55 +485,88 @@ class ClientManager {
             return [];
         }
 
-        try {
-            const chats = await client.getChats();
-            const groups = [];
+        // Check cache first
+        const cached = this.groupsCache.get(userId);
+        if (cached && (Date.now() - cached.timestamp) < this.GROUPS_CACHE_TTL) {
+            console.log(`[CACHE] Returning cached groups for user ${userId} (${cached.groups.length} groups)`);
+            return cached.groups;
+        }
 
-            for (const chat of chats) {
-                if (chat.isGroup) {
-                    let participantCount = 0;
+        // Use operation queue to prevent concurrent calls
+        return this._queueOperation(userId, async () => {
+            // Double-check cache after getting queue lock (another request might have populated it)
+            const cachedAfterQueue = this.groupsCache.get(userId);
+            if (cachedAfterQueue && (Date.now() - cachedAfterQueue.timestamp) < this.GROUPS_CACHE_TTL) {
+                console.log(`[CACHE] Returning cached groups for user ${userId} after queue (${cachedAfterQueue.groups.length} groups)`);
+                return cachedAfterQueue.groups;
+            }
 
-                    try {
-                        if (chat.participants && Array.isArray(chat.participants)) {
-                            participantCount = chat.participants.length;
-                        } else {
-                            const groupChat = await client.getChatById(chat.id._serialized);
-                            if (groupChat.participants && Array.isArray(groupChat.participants)) {
-                                participantCount = groupChat.participants.length;
+            try {
+                console.log(`[GROUPS] Fetching groups for user ${userId}...`);
+                const chats = await client.getChats();
+                const groups = [];
+
+                for (const chat of chats) {
+                    if (chat.isGroup) {
+                        let participantCount = 0;
+
+                        try {
+                            if (chat.participants && Array.isArray(chat.participants)) {
+                                participantCount = chat.participants.length;
                             }
+                            // Skip getChatById to avoid extra timeout-prone operations
+                            // The participant count from getChats() should be sufficient
+                        } catch (e) {
+                            // Silently handle errors
                         }
-                    } catch (e) {
-                        // Silently handle errors
+
+                        groups.push({
+                            id: chat.id._serialized,
+                            name: chat.name,
+                            participantCount: participantCount
+                        });
+                    }
+                }
+
+                // Cache the results
+                this.groupsCache.set(userId, {
+                    groups: groups,
+                    timestamp: Date.now()
+                });
+
+                console.log(`[GROUPS] Fetched and cached ${groups.length} groups for user ${userId}`);
+                return groups;
+            } catch (error) {
+                console.error(`Error getting groups for user ${userId}:`, error.message);
+
+                // If frame is detached or timeout, the session may be invalid
+                if (error.message && (error.message.includes('detached Frame') || error.message.includes('timed out'))) {
+                    console.log(`[WARN] Session for user ${userId} has issues: ${error.message}`);
+
+                    // Return cached data if available (even if expired)
+                    const staleCached = this.groupsCache.get(userId);
+                    if (staleCached) {
+                        console.log(`[CACHE] Returning stale cached groups for user ${userId} due to error`);
+                        return staleCached.groups;
                     }
 
-                    groups.push({
-                        id: chat.id._serialized,
-                        name: chat.name,
-                        participantCount: participantCount
-                    });
+                    // Only mark disconnected for detached Frame, not for timeouts
+                    if (error.message.includes('detached Frame')) {
+                        this.clientStatus.set(userId, 'disconnected');
+
+                        // Try to reinitialize in background
+                        setTimeout(() => {
+                            console.log(`[RECONNECT] Attempting to reinitialize client for user ${userId}`);
+                            this.initializeClient(userId).catch(err => {
+                                console.error(`[RECONNECT] Failed to reinitialize user ${userId}:`, err.message);
+                            });
+                        }, 5000);
+                    }
                 }
+
+                return [];
             }
-
-            return groups;
-        } catch (error) {
-            console.error(`Error getting groups for user ${userId}:`, error);
-
-            // If frame is detached, the session is invalid - mark for reconnection
-            if (error.message && error.message.includes('detached Frame')) {
-                console.log(`[WARN] Session for user ${userId} has invalid frame, marking for reconnection`);
-                this.clientStatus.set(userId, 'disconnected');
-
-                // Try to reinitialize in background
-                setTimeout(() => {
-                    console.log(`[RECONNECT] Attempting to reinitialize client for user ${userId}`);
-                    this.initializeClient(userId).catch(err => {
-                        console.error(`[RECONNECT] Failed to reinitialize user ${userId}:`, err.message);
-                    });
-                }, 5000);
-            }
-
-            return [];
-        }
+        });
     }
 
     async getGroupMembers(userId, groupId) {
@@ -516,42 +575,48 @@ class ClientManager {
             return [];
         }
 
-        try {
-            const chat = await client.getChatById(groupId);
-            if (!chat.isGroup) {
-                return [];
-            }
-
-            const members = [];
-            for (const participant of chat.participants) {
-                // Safely get contact - may fail for some participant types
-                let contact = null;
-                try {
-                    contact = await client.getContactById(participant.id._serialized);
-                } catch (contactErr) {
-                    console.log(`[WARN] Could not get contact for participant ${participant.id._serialized}: ${contactErr.message}`);
+        // Use operation queue to prevent concurrent calls
+        return this._queueOperation(userId, async () => {
+            try {
+                const chat = await client.getChatById(groupId);
+                if (!chat.isGroup) {
+                    return [];
                 }
 
-                members.push({
-                    id: participant.id._serialized,
-                    name: contact?.pushname || contact?.name || participant.id.user,
-                    phone: participant.id.user,
-                    isAdmin: participant.isAdmin || participant.isSuperAdmin
-                });
+                const members = [];
+                for (const participant of chat.participants) {
+                    // Safely get contact - may fail for some participant types
+                    let contact = null;
+                    try {
+                        contact = await client.getContactById(participant.id._serialized);
+                    } catch (contactErr) {
+                        // Silently handle - don't log every failure to reduce noise
+                    }
+
+                    members.push({
+                        id: participant.id._serialized,
+                        name: contact?.pushname || contact?.name || participant.id.user,
+                        phone: participant.id.user,
+                        isAdmin: participant.isAdmin || participant.isSuperAdmin
+                    });
+                }
+
+                return members;
+            } catch (error) {
+                console.error(`Error getting members for group ${groupId}:`, error.message);
+
+                // Handle detached frame or timeout errors
+                if (error.message && (error.message.includes('detached Frame') || error.message.includes('timed out'))) {
+                    console.log(`[WARN] Session for user ${userId} has issues: ${error.message}`);
+
+                    if (error.message.includes('detached Frame')) {
+                        this.clientStatus.set(userId, 'disconnected');
+                    }
+                }
+
+                return [];
             }
-
-            return members;
-        } catch (error) {
-            console.error(`Error getting members for group ${groupId}:`, error);
-
-            // Handle detached frame error
-            if (error.message && error.message.includes('detached Frame')) {
-                console.log(`[WARN] Session for user ${userId} has invalid frame`);
-                this.clientStatus.set(userId, 'disconnected');
-            }
-
-            return [];
-        }
+        });
     }
 
     async setGroupMessagesAdminOnly(userId, groupId, adminOnly) {
@@ -560,35 +625,42 @@ class ClientManager {
             throw new Error('Client not ready');
         }
 
-        try {
-            const chat = await client.getChatById(groupId);
+        // Use operation queue to prevent concurrent calls
+        return this._queueOperation(userId, async () => {
+            try {
+                console.log(`[SETTINGS] Setting group ${groupId} admin-only=${adminOnly} for user ${userId}`);
 
-            if (!chat || !chat.isGroup) {
-                throw new Error('Group not found');
+                const chat = await client.getChatById(groupId);
+
+                if (!chat || !chat.isGroup) {
+                    throw new Error('Group not found');
+                }
+
+                // setMessagesAdminsOnly(true) = only admins can send messages
+                // setMessagesAdminsOnly(false) = everyone can send messages
+                const success = await chat.setMessagesAdminsOnly(adminOnly);
+
+                return {
+                    success: success,
+                    groupId: groupId,
+                    adminOnly: adminOnly
+                };
+            } catch (error) {
+                console.error(`Error setting group ${groupId} admin-only for user ${userId}:`, error.message);
+
+                // Handle detached frame or timeout errors
+                if (error.message && (error.message.includes('detached Frame') || error.message.includes('timed out'))) {
+                    console.log(`[WARN] Session for user ${userId} has issues: ${error.message}`);
+
+                    // Only mark disconnected for detached Frame, not for timeouts
+                    if (error.message.includes('detached Frame')) {
+                        this.clientStatus.set(userId, 'disconnected');
+                    }
+                }
+
+                throw error;
             }
-
-            console.log(`[SETTINGS] Setting group ${groupId} admin-only=${adminOnly} for user ${userId}`);
-
-            // setMessagesAdminsOnly(true) = only admins can send messages
-            // setMessagesAdminsOnly(false) = everyone can send messages
-            const success = await chat.setMessagesAdminsOnly(adminOnly);
-
-            return {
-                success: success,
-                groupId: groupId,
-                adminOnly: adminOnly
-            };
-        } catch (error) {
-            console.error(`Error setting group ${groupId} admin-only for user ${userId}:`, error);
-
-            // Handle detached frame error
-            if (error.message && error.message.includes('detached Frame')) {
-                console.log(`[WARN] Session for user ${userId} has invalid frame`);
-                this.clientStatus.set(userId, 'disconnected');
-            }
-
-            throw error;
-        }
+        });
     }
 
     async sendMessage(userId, groupId, content, options = {}) {
@@ -597,87 +669,25 @@ class ClientManager {
             throw new Error('Client not ready');
         }
 
-        try {
-            // Build mentions array if provided
-            let mentions = [];
+        // Use operation queue to prevent concurrent calls
+        return this._queueOperation(userId, async () => {
+            try {
+                // Build mentions array if provided
+                let mentions = [];
 
-            if (options.mentionAll || options.mentionIds?.length > 0) {
-                const chat = await client.getChatById(groupId);
-                if (!chat) {
-                    throw new Error('Group not found');
-                }
-
-                if (options.mentionAll) {
-                    // Get all participants and add them as mentions
-                    if (chat.participants && Array.isArray(chat.participants)) {
-                        mentions = chat.participants.map(p => p.id._serialized);
+                if (options.mentionAll || options.mentionIds?.length > 0) {
+                    const chat = await client.getChatById(groupId);
+                    if (!chat) {
+                        throw new Error('Group not found');
                     }
-                } else if (options.mentionIds && options.mentionIds.length > 0) {
-                    // Convert phone numbers to WhatsApp IDs
-                    mentions = options.mentionIds.map(phone => {
-                        if (phone.includes('@')) {
-                            return phone;
-                        }
-                        return `${phone}@c.us`;
-                    });
-                }
-            }
 
-            // Use client.sendMessage directly with sendSeen: false to bypass markedUnread error
-            const sendOptions = {
-                sendSeen: false,  // Skip sendSeen to avoid markedUnread error
-                ...(mentions.length > 0 ? { mentions } : {})
-            };
-
-            console.log(`[SEND] Sending message to ${groupId} for user ${userId} with ${mentions.length} mentions`);
-
-            const result = await client.sendMessage(groupId, content, sendOptions);
-
-            return {
-                success: true,
-                messageId: result.id._serialized,
-                timestamp: result.timestamp,
-                groupId: groupId
-            };
-        } catch (error) {
-            console.error(`Error sending message to group ${groupId} for user ${userId}:`, error.message);
-
-            // Handle detached frame error
-            if (error.message && error.message.includes('detached Frame')) {
-                console.log(`[WARN] Session for user ${userId} has invalid frame`);
-                this.clientStatus.set(userId, 'disconnected');
-            }
-
-            throw error;
-        }
-    }
-
-    async sendMediaMessage(userId, groupId, mediaPath, caption = '', options = {}) {
-        const client = this.clients.get(userId);
-        if (!client || this.clientStatus.get(userId) !== 'ready') {
-            throw new Error('Client not ready');
-        }
-
-        // Check if file exists
-        if (!fs.existsSync(mediaPath)) {
-            throw new Error('Media file not found');
-        }
-
-        try {
-            // Create MessageMedia from file
-            const media = MessageMedia.fromFilePath(mediaPath);
-
-            // Build mentions array if provided
-            let mentions = [];
-
-            if (options.mentionAll || options.mentionIds?.length > 0) {
-                const chat = await client.getChatById(groupId);
-                if (chat) {
                     if (options.mentionAll) {
+                        // Get all participants and add them as mentions
                         if (chat.participants && Array.isArray(chat.participants)) {
                             mentions = chat.participants.map(p => p.id._serialized);
                         }
                     } else if (options.mentionIds && options.mentionIds.length > 0) {
+                        // Convert phone numbers to WhatsApp IDs
                         mentions = options.mentionIds.map(phone => {
                             if (phone.includes('@')) {
                                 return phone;
@@ -686,51 +696,121 @@ class ClientManager {
                         });
                     }
                 }
-            }
 
-            // Use client.sendMessage directly with sendSeen: false to bypass markedUnread error
-            const sendOptions = {
-                sendSeen: false,  // Skip sendSeen to avoid markedUnread error
-                caption: caption || undefined,
-                ...(mentions.length > 0 ? { mentions } : {})
-            };
+                // Use client.sendMessage directly with sendSeen: false to bypass markedUnread error
+                const sendOptions = {
+                    sendSeen: false,  // Skip sendSeen to avoid markedUnread error
+                    ...(mentions.length > 0 ? { mentions } : {})
+                };
 
-            console.log(`[SEND] Sending media to ${groupId} for user ${userId}`);
+                console.log(`[SEND] Sending message to ${groupId} for user ${userId} with ${mentions.length} mentions`);
 
-            const result = await client.sendMessage(groupId, media, sendOptions);
+                const result = await client.sendMessage(groupId, content, sendOptions);
 
-            // Clean up uploaded file after sending
-            try {
-                fs.unlinkSync(mediaPath);
-            } catch (e) {
-                console.log(`[WARN] Could not delete temp file: ${e.message}`);
-            }
+                return {
+                    success: true,
+                    messageId: result.id._serialized,
+                    timestamp: result.timestamp,
+                    groupId: groupId
+                };
+            } catch (error) {
+                console.error(`Error sending message to group ${groupId} for user ${userId}:`, error.message);
 
-            return {
-                success: true,
-                messageId: result.id._serialized,
-                timestamp: result.timestamp,
-                groupId: groupId
-            };
-        } catch (error) {
-            console.error(`Error sending media to group ${groupId} for user ${userId}:`, error.message);
-
-            // Clean up uploaded file on error
-            try {
-                if (fs.existsSync(mediaPath)) {
-                    fs.unlinkSync(mediaPath);
+                // Handle detached frame or timeout errors
+                if (error.message && (error.message.includes('detached Frame') || error.message.includes('timed out'))) {
+                    if (error.message.includes('detached Frame')) {
+                        this.clientStatus.set(userId, 'disconnected');
+                    }
                 }
-            } catch (e) {
-                // Ignore cleanup errors
-            }
 
-            if (error.message && error.message.includes('detached Frame')) {
-                console.log(`[WARN] Session for user ${userId} has invalid frame`);
-                this.clientStatus.set(userId, 'disconnected');
+                throw error;
             }
+        });
+    }
 
-            throw error;
+    async sendMediaMessage(userId, groupId, mediaPath, caption = '', options = {}) {
+        const client = this.clients.get(userId);
+        if (!client || this.clientStatus.get(userId) !== 'ready') {
+            throw new Error('Client not ready');
         }
+
+        // Check if file exists before queuing
+        if (!fs.existsSync(mediaPath)) {
+            throw new Error('Media file not found');
+        }
+
+        // Use operation queue to prevent concurrent calls
+        return this._queueOperation(userId, async () => {
+            try {
+                // Create MessageMedia from file
+                const media = MessageMedia.fromFilePath(mediaPath);
+
+                // Build mentions array if provided
+                let mentions = [];
+
+                if (options.mentionAll || options.mentionIds?.length > 0) {
+                    const chat = await client.getChatById(groupId);
+                    if (chat) {
+                        if (options.mentionAll) {
+                            if (chat.participants && Array.isArray(chat.participants)) {
+                                mentions = chat.participants.map(p => p.id._serialized);
+                            }
+                        } else if (options.mentionIds && options.mentionIds.length > 0) {
+                            mentions = options.mentionIds.map(phone => {
+                                if (phone.includes('@')) {
+                                    return phone;
+                                }
+                                return `${phone}@c.us`;
+                            });
+                        }
+                    }
+                }
+
+                // Use client.sendMessage directly with sendSeen: false to bypass markedUnread error
+                const sendOptions = {
+                    sendSeen: false,  // Skip sendSeen to avoid markedUnread error
+                    caption: caption || undefined,
+                    ...(mentions.length > 0 ? { mentions } : {})
+                };
+
+                console.log(`[SEND] Sending media to ${groupId} for user ${userId}`);
+
+                const result = await client.sendMessage(groupId, media, sendOptions);
+
+                // Clean up uploaded file after sending
+                try {
+                    fs.unlinkSync(mediaPath);
+                } catch (e) {
+                    console.log(`[WARN] Could not delete temp file: ${e.message}`);
+                }
+
+                return {
+                    success: true,
+                    messageId: result.id._serialized,
+                    timestamp: result.timestamp,
+                    groupId: groupId
+                };
+            } catch (error) {
+                console.error(`Error sending media to group ${groupId} for user ${userId}:`, error.message);
+
+                // Clean up uploaded file on error
+                try {
+                    if (fs.existsSync(mediaPath)) {
+                        fs.unlinkSync(mediaPath);
+                    }
+                } catch (e) {
+                    // Ignore cleanup errors
+                }
+
+                if (error.message && (error.message.includes('detached Frame') || error.message.includes('timed out'))) {
+                    if (error.message.includes('detached Frame')) {
+                        this.clientStatus.set(userId, 'disconnected');
+                    }
+                }
+
+                throw error;
+            }
+        });
     }
 
     async sendWelcomeMessage(userId, groupId, content, joinerPhones = [], extraMentionPhones = []) {
@@ -739,154 +819,162 @@ class ClientManager {
             throw new Error('Client not ready');
         }
 
-        try {
-            // Build mentions array and contact list for clickable mentions
-            const mentions = [];
-            const joinerMentionNames = [];
-            const extraMentionNames = [];
+        // Use operation queue to prevent concurrent calls
+        return this._queueOperation(userId, async () => {
+            try {
+                // Build mentions array and contact list for clickable mentions
+                const mentions = [];
+                const joinerMentionNames = [];
+                const extraMentionNames = [];
 
-            // Process joiner phones (will appear at the start)
-            // Note: Using ID strings instead of Contact objects (Contact array is deprecated)
-            for (const phone of joinerPhones) {
-                if (!phone) continue;
+                // Process joiner phones (will appear at the start)
+                // Note: Using ID strings instead of Contact objects (Contact array is deprecated)
+                for (const phone of joinerPhones) {
+                    if (!phone) continue;
 
-                // Clean phone number (remove any non-digit characters)
-                const cleanPhone = phone.replace(/[^\d]/g, '');
-                const contactId = `${cleanPhone}@c.us`;
+                    // Clean phone number (remove any non-digit characters)
+                    const cleanPhone = phone.replace(/[^\d]/g, '');
+                    const contactId = `${cleanPhone}@c.us`;
 
-                // Always use contactId string (not Contact object) to avoid deprecation warning
-                mentions.push(contactId);
-                joinerMentionNames.push(`@${cleanPhone}`);
+                    // Always use contactId string (not Contact object) to avoid deprecation warning
+                    mentions.push(contactId);
+                    joinerMentionNames.push(`@${cleanPhone}`);
+                }
+
+                // Process extra mention phones (will appear at the end after text)
+                for (const phone of extraMentionPhones) {
+                    if (!phone) continue;
+
+                    const cleanPhone = phone.replace(/[^\d]/g, '');
+                    const contactId = `${cleanPhone}@c.us`;
+
+                    // Always use contactId string (not Contact object) to avoid deprecation warning
+                    mentions.push(contactId);
+                    extraMentionNames.push(`@${cleanPhone}`);
+                }
+
+                // Build the message: @joiners + text + @extraMentions
+                let messageContent = '';
+
+                // Add joiner mentions at the start
+                if (joinerMentionNames.length > 0) {
+                    messageContent = joinerMentionNames.join(' ') + '\n\n';
+                }
+
+                // Add welcome text
+                messageContent += content;
+
+                // Add extra mentions at the end
+                if (extraMentionNames.length > 0) {
+                    messageContent += '\n\n' + extraMentionNames.join(' ');
+                }
+
+                // Use client.sendMessage directly with sendSeen: false to bypass markedUnread error
+                const sendOptions = {
+                    sendSeen: false,  // Skip sendSeen to avoid markedUnread error
+                    ...(mentions.length > 0 ? { mentions } : {})
+                };
+
+                console.log(`[WELCOME] Sending welcome message to ${groupId} for user ${userId} with ${joinerMentionNames.length} joiner mentions and ${extraMentionNames.length} extra mentions`);
+
+                const result = await client.sendMessage(groupId, messageContent, sendOptions);
+
+                return {
+                    success: true,
+                    messageId: result.id._serialized,
+                    timestamp: result.timestamp,
+                    groupId: groupId,
+                    joinerMentionsCount: joinerMentionNames.length,
+                    extraMentionsCount: extraMentionNames.length
+                };
+            } catch (error) {
+                console.error(`Error sending welcome message to group ${groupId} for user ${userId}:`, error.message);
+
+                // Handle detached frame or timeout errors
+                if (error.message && (error.message.includes('detached Frame') || error.message.includes('timed out'))) {
+                    if (error.message.includes('detached Frame')) {
+                        this.clientStatus.set(userId, 'disconnected');
+                    }
+                }
+
+                throw error;
             }
-
-            // Process extra mention phones (will appear at the end after text)
-            for (const phone of extraMentionPhones) {
-                if (!phone) continue;
-
-                const cleanPhone = phone.replace(/[^\d]/g, '');
-                const contactId = `${cleanPhone}@c.us`;
-
-                // Always use contactId string (not Contact object) to avoid deprecation warning
-                mentions.push(contactId);
-                extraMentionNames.push(`@${cleanPhone}`);
-            }
-
-            // Build the message: @joiners + text + @extraMentions
-            let messageContent = '';
-
-            // Add joiner mentions at the start
-            if (joinerMentionNames.length > 0) {
-                messageContent = joinerMentionNames.join(' ') + '\n\n';
-            }
-
-            // Add welcome text
-            messageContent += content;
-
-            // Add extra mentions at the end
-            if (extraMentionNames.length > 0) {
-                messageContent += '\n\n' + extraMentionNames.join(' ');
-            }
-
-            // Use client.sendMessage directly with sendSeen: false to bypass markedUnread error
-            const sendOptions = {
-                sendSeen: false,  // Skip sendSeen to avoid markedUnread error
-                ...(mentions.length > 0 ? { mentions } : {})
-            };
-
-            console.log(`[WELCOME] Sending welcome message to ${groupId} for user ${userId} with ${joinerMentionNames.length} joiner mentions and ${extraMentionNames.length} extra mentions`);
-
-            const result = await client.sendMessage(groupId, messageContent, sendOptions);
-
-            return {
-                success: true,
-                messageId: result.id._serialized,
-                timestamp: result.timestamp,
-                groupId: groupId,
-                joinerMentionsCount: joinerMentionNames.length,
-                extraMentionsCount: extraMentionNames.length
-            };
-        } catch (error) {
-            console.error(`Error sending welcome message to group ${groupId} for user ${userId}:`, error);
-
-            // Handle detached frame error
-            if (error.message && error.message.includes('detached Frame')) {
-                console.log(`[WARN] Session for user ${userId} has invalid frame`);
-                this.clientStatus.set(userId, 'disconnected');
-            }
-
-            throw error;
-        }
+        });
     }
 
-    async sendPoll(userId, groupId, question, options, allowMultipleAnswers = false, mentionOptions = {}) {
+    async sendPoll(userId, groupId, question, pollOptions, allowMultipleAnswers = false, mentionOptions = {}) {
         const client = this.clients.get(userId);
         if (!client || this.clientStatus.get(userId) !== 'ready') {
             throw new Error('Client not ready');
         }
 
         // Validate poll options (WhatsApp requires 2-12 options)
-        if (!options || options.length < 2) {
+        if (!pollOptions || pollOptions.length < 2) {
             throw new Error('Poll must have at least 2 options');
         }
-        if (options.length > 12) {
+        if (pollOptions.length > 12) {
             throw new Error('Poll cannot have more than 12 options');
         }
 
-        try {
-            // Build mentions array if provided
-            let mentions = [];
+        // Use operation queue to prevent concurrent calls
+        return this._queueOperation(userId, async () => {
+            try {
+                // Build mentions array if provided
+                let mentions = [];
 
-            if (mentionOptions.mentionAll || mentionOptions.mentionIds?.length > 0) {
-                const chat = await client.getChatById(groupId);
-                if (chat) {
-                    if (mentionOptions.mentionAll) {
-                        if (chat.participants && Array.isArray(chat.participants)) {
-                            mentions = chat.participants.map(p => p.id._serialized);
-                        }
-                    } else if (mentionOptions.mentionIds && mentionOptions.mentionIds.length > 0) {
-                        mentions = mentionOptions.mentionIds.map(phone => {
-                            if (phone.includes('@')) {
-                                return phone;
+                if (mentionOptions.mentionAll || mentionOptions.mentionIds?.length > 0) {
+                    const chat = await client.getChatById(groupId);
+                    if (chat) {
+                        if (mentionOptions.mentionAll) {
+                            if (chat.participants && Array.isArray(chat.participants)) {
+                                mentions = chat.participants.map(p => p.id._serialized);
                             }
-                            return `${phone}@c.us`;
-                        });
+                        } else if (mentionOptions.mentionIds && mentionOptions.mentionIds.length > 0) {
+                            mentions = mentionOptions.mentionIds.map(phone => {
+                                if (phone.includes('@')) {
+                                    return phone;
+                                }
+                                return `${phone}@c.us`;
+                            });
+                        }
                     }
                 }
+
+                // Create the poll
+                const poll = new Poll(question, pollOptions, {
+                    allowMultipleAnswers: allowMultipleAnswers
+                });
+
+                // Use client.sendMessage directly with sendSeen: false to bypass markedUnread error
+                const sendOptions = {
+                    sendSeen: false,  // Skip sendSeen to avoid markedUnread error
+                    ...(mentions.length > 0 ? { mentions } : {})
+                };
+
+                console.log(`[POLL] Sending poll to ${groupId} for user ${userId}: "${question}" with ${pollOptions.length} options, ${mentions.length} mentions`);
+
+                const result = await client.sendMessage(groupId, poll, sendOptions);
+
+                return {
+                    success: true,
+                    messageId: result.id._serialized,
+                    timestamp: result.timestamp,
+                    groupId: groupId,
+                    question: question,
+                    optionsCount: pollOptions.length
+                };
+            } catch (error) {
+                console.error(`Error sending poll to group ${groupId} for user ${userId}:`, error.message);
+
+                if (error.message && (error.message.includes('detached Frame') || error.message.includes('timed out'))) {
+                    if (error.message.includes('detached Frame')) {
+                        this.clientStatus.set(userId, 'disconnected');
+                    }
+                }
+
+                throw error;
             }
-
-            // Create the poll
-            const poll = new Poll(question, options, {
-                allowMultipleAnswers: allowMultipleAnswers
-            });
-
-            // Use client.sendMessage directly with sendSeen: false to bypass markedUnread error
-            const sendOptions = {
-                sendSeen: false,  // Skip sendSeen to avoid markedUnread error
-                ...(mentions.length > 0 ? { mentions } : {})
-            };
-
-            console.log(`[POLL] Sending poll to ${groupId} for user ${userId}: "${question}" with ${options.length} options, ${mentions.length} mentions`);
-
-            const result = await client.sendMessage(groupId, poll, sendOptions);
-
-            return {
-                success: true,
-                messageId: result.id._serialized,
-                timestamp: result.timestamp,
-                groupId: groupId,
-                question: question,
-                optionsCount: options.length
-            };
-        } catch (error) {
-            console.error(`Error sending poll to group ${groupId} for user ${userId}:`, error.message);
-
-            if (error.message && error.message.includes('detached Frame')) {
-                console.log(`[WARN] Session for user ${userId} has invalid frame`);
-                this.clientStatus.set(userId, 'disconnected');
-            }
-
-            throw error;
-        }
+        });
     }
 
     async destroyClient(userId) {
@@ -901,6 +989,8 @@ class ClientManager {
             this.clients.delete(userId);
             this.clientStatus.delete(userId);
             this.qrCodes.delete(userId);
+            this.groupsCache.delete(userId);
+            this.operationQueues.delete(userId);
 
             // Clear QR timeout if exists
             if (this.qrTimeouts.has(userId)) {

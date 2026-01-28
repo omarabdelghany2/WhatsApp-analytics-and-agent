@@ -53,9 +53,11 @@ class WhatsAppBridge:
             try:
                 response = await client.get(
                     f"{self.base_url}/api/clients/{user_id}/groups",
-                    timeout=30.0
+                    timeout=120.0  # Increased timeout - groups fetch can take a while with operation queue
                 )
                 return response.json()
+            except httpx.ReadTimeout:
+                return {"success": False, "groups": [], "error": "Request timed out - WhatsApp service is busy. Please try again."}
             except httpx.RequestError as e:
                 return {"success": False, "groups": [], "error": str(e)}
 
@@ -77,9 +79,11 @@ class WhatsAppBridge:
             try:
                 response = await client.get(
                     f"{self.base_url}/api/clients/{user_id}/groups/{group_id}/members",
-                    timeout=30.0
+                    timeout=120.0  # Increased timeout for operation queue
                 )
                 return response.json()
+            except httpx.ReadTimeout:
+                return {"success": False, "members": [], "error": "Request timed out - WhatsApp service is busy. Please try again."}
             except httpx.RequestError as e:
                 return {"success": False, "members": [], "error": str(e)}
 
@@ -151,9 +155,11 @@ class WhatsAppBridge:
                 response = await client.post(
                     f"{self.base_url}/api/clients/{user_id}/groups/{group_id}/settings",
                     json={"messagesAdminOnly": admin_only},
-                    timeout=30.0
+                    timeout=120.0  # Increased timeout for operation queue
                 )
                 return response.json()
+            except httpx.ReadTimeout:
+                return {"success": False, "error": "Request timed out - WhatsApp service is busy. Please try again."}
             except httpx.RequestError as e:
                 return {"success": False, "error": str(e)}
 
