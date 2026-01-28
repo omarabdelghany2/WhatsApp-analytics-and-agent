@@ -481,7 +481,12 @@ class ClientManager {
 
     async getGroups(userId) {
         const client = this.clients.get(userId);
-        if (!client || this.clientStatus.get(userId) !== 'ready') {
+        const status = this.clientStatus.get(userId);
+
+        console.log(`[GROUPS] getGroups called for user ${userId}, client exists: ${!!client}, status: ${status}`);
+
+        if (!client || status !== 'ready') {
+            console.log(`[GROUPS] Returning empty - client not ready for user ${userId}`);
             return [];
         }
 
@@ -504,6 +509,7 @@ class ClientManager {
             try {
                 console.log(`[GROUPS] Fetching groups for user ${userId}...`);
                 const chats = await client.getChats();
+                console.log(`[GROUPS] Got ${chats ? chats.length : 0} total chats for user ${userId}`);
                 const groups = [];
 
                 for (const chat of chats) {
@@ -537,7 +543,8 @@ class ClientManager {
                 console.log(`[GROUPS] Fetched and cached ${groups.length} groups for user ${userId}`);
                 return groups;
             } catch (error) {
-                console.error(`Error getting groups for user ${userId}:`, error.message);
+                console.error(`[GROUPS] Error getting groups for user ${userId}:`, error.message);
+                console.error(`[GROUPS] Full error:`, error);
 
                 // If frame is detached or timeout, the session may be invalid
                 if (error.message && (error.message.includes('detached Frame') || error.message.includes('timed out'))) {
