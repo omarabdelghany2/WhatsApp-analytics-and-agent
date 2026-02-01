@@ -1,0 +1,19 @@
+diff --git a/node_modules/whatsapp-web.js/src/Client.js b/node_modules/whatsapp-web.js/src/Client.js
+index f68491f..40e96f1 100644
+--- a/node_modules/whatsapp-web.js/src/Client.js
++++ b/node_modules/whatsapp-web.js/src/Client.js
+@@ -286,7 +286,13 @@ class Client extends EventEmitter {
+         });
+         await this.pupPage.evaluate(() => {
+             window.AuthStore.AppState.on('change:state', (_AppState, state) => { window.onAuthAppStateChangedEvent(state); });
+-            window.AuthStore.AppState.on('change:hasSynced', () => { window.onAppStateHasSyncedEvent(); });
++            const appState = window.AuthStore.AppState;
++            if (appState.hasSynced) {
++                window.onAppStateHasSyncedEvent();
++            }
++            appState.on('change:hasSynced', (_, hasSynced) => {
++                if (hasSynced) window.onAppStateHasSyncedEvent();
++            });
+             window.AuthStore.Cmd.on('offline_progress_update', () => {
+                 window.onOfflineProgressUpdateEvent(window.AuthStore.OfflineMessageHandler.getOfflineDeliveryProgress()); 
+             });
