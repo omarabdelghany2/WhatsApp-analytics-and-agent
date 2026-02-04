@@ -107,6 +107,7 @@ export default function BroadcastPage() {
   const [pollResult, setPollResult] = useState<{ groups_sent: number; groups_failed: number; error_message: string | null } | null>(null)
 
   // Channel state
+  const [channelMode, setChannelMode] = useState<'message' | 'poll'>('message')
   const [channelContent, setChannelContent] = useState('')
   const [selectedChannels, setSelectedChannels] = useState<Channel[]>([])
   const [channelScheduleMode, setChannelScheduleMode] = useState(false)
@@ -115,6 +116,11 @@ export default function BroadcastPage() {
   const [channelSelectedMedia, setChannelSelectedMedia] = useState<File | null>(null)
   const [channelMediaPreview, setChannelMediaPreview] = useState<string | null>(null)
   const channelFileInputRef = useRef<HTMLInputElement>(null)
+
+  // Channel poll state
+  const [channelPollQuestion, setChannelPollQuestion] = useState('')
+  const [channelPollOptions, setChannelPollOptions] = useState<string[]>(['', ''])
+  const [channelPollAllowMultiple, setChannelPollAllowMultiple] = useState(false)
 
   // Channel progress state
   const [showChannelProgressModal, setShowChannelProgressModal] = useState(false)
@@ -399,6 +405,36 @@ export default function BroadcastPage() {
     },
   })
 
+  // Send channel poll mutation
+  const sendChannelPollMutation = useMutation({
+    mutationFn: (data: {
+      question: string
+      options: string[]
+      allow_multiple_answers: boolean
+      channel_ids: string[]
+      channel_names: string[]
+      scheduled_at?: string
+    }) => api.sendChannelPollBroadcast(data),
+    onSuccess: (result) => {
+      if (!result.scheduled) {
+        setShowChannelProgressModal(true)
+        setChannelProgress(null)
+        setChannelResult(null)
+      } else {
+        resetChannelForm()
+        refetchScheduled()
+        setActiveTab('scheduled')
+      }
+    },
+    onError: (error) => {
+      setChannelResult({
+        channels_sent: 0,
+        channels_failed: selectedChannels.length,
+        error_message: (error as Error).message,
+      })
+    },
+  })
+
   // Subscribe to WebSocket events
   useEffect(() => {
     const unsubProgress = subscribe('broadcast_progress', (data) => {
@@ -435,6 +471,17 @@ export default function BroadcastPage() {
       setChannelProgress(null)
     })
 
+    const unsubChannelPollProgress = subscribe('channel_poll_progress', (data) => {
+      const progress = data as unknown as { channel_name: string; channels_sent: number; total_channels: number }
+      setChannelProgress(progress)
+    })
+
+    const unsubChannelPollComplete = subscribe('channel_poll_complete', (data) => {
+      const result = data as unknown as { channels_sent: number; channels_failed: number; error_message: string | null }
+      setChannelResult(result)
+      setChannelProgress(null)
+    })
+
     return () => {
       unsubProgress()
       unsubComplete()
@@ -442,6 +489,8 @@ export default function BroadcastPage() {
       unsubPollComplete()
       unsubChannelProgress()
       unsubChannelComplete()
+      unsubChannelPollProgress()
+      unsubChannelPollComplete()
     }
   }, [subscribe, refetchHistory])
 
@@ -634,6 +683,7 @@ export default function BroadcastPage() {
 
   // Reset channel form
   const resetChannelForm = () => {
+    setChannelMode('message')
     setChannelContent('')
     setSelectedChannels([])
     setChannelScheduleMode(false)
@@ -643,6 +693,53 @@ export default function BroadcastPage() {
     if (channelFileInputRef.current) {
       channelFileInputRef.current.value = ''
     }
+    // Reset poll state
+    setChannelPollQuestion('')
+    setChannelPollOptions(['', ''])
+    setChannelPollAllowMultiple(false)
+  }
+
+  // Channel poll helper functions
+  const addChannelPollOption = () => {
+    if (channelPollOptions.length < 12) {
+      setChannelPollOptions([...channelPollOptions, ''])
+    }
+  }
+
+  const removeChannelPollOption = (index: number) => {
+    if (channelPollOptions.length > 2) {
+      setChannelPollOptions(channelPollOptions.filter((_, i) => i !== index))
+    }
+  }
+
+  const updateChannelPollOption = (index: number, value: string) => {
+    const newOptions = [...channelPollOptions]
+    newOptions[index] = value
+    setChannelPollOptions(newOptions)
+  }
+
+  // Handle send channel poll
+  const handleSendChannelPoll = () => {
+    const validOptions = channelPollOptions.filter(opt => opt.trim())
+    if (!channelPollQuestion.trim() || validOptions.length < 2 || selectedChannels.length === 0) return
+
+    setShowChannelProgressModal(true)
+    setChannelProgress(null)
+    setChannelResult(null)
+
+    const pollData: Parameters<typeof api.sendChannelPollBroadcast>[0] = {
+      question: channelPollQuestion.trim(),
+      options: validOptions,
+      allow_multiple_answers: channelPollAllowMultiple,
+      channel_ids: selectedChannels.map((c) => c.id),
+      channel_names: selectedChannels.map((c) => c.name),
+    }
+
+    if (channelScheduleMode && channelScheduledDateTime) {
+      pollData.scheduled_at = new Date(channelScheduledDateTime).toISOString()
+    }
+
+    sendChannelPollMutation.mutate(pollData)
   }
 
   // Handle channel file selection
@@ -1365,127 +1462,287 @@ export default function BroadcastPage() {
       {/* Channels Tab */}
       {activeTab === 'channels' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left: Message compose */}
+          {/* Left: Message/Poll compose */}
           <div className="lg:col-span-2 space-y-4">
+            {/* Mode Selector */}
             <div className="bg-surface rounded-lg p-4">
-              <h3 className="text-lg font-medium text-foreground mb-4">Broadcast to Channels</h3>
-
-              {/* Message content */}
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-foreground mb-2">
-                  Message (optional if sending media)
-                </label>
-                <textarea
-                  value={channelContent}
-                  onChange={(e) => setChannelContent(e.target.value)}
-                  placeholder="Type your message here..."
-                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary min-h-[150px]"
-                />
-                <div className="text-sm text-muted mt-1">{channelContent.length} characters</div>
+              <div className="flex gap-2 mb-4">
+                <button
+                  onClick={() => setChannelMode('message')}
+                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+                    channelMode === 'message'
+                      ? 'bg-primary text-white'
+                      : 'bg-surface-secondary text-foreground-secondary hover:bg-surface-secondary/80'
+                  }`}
+                >
+                  <Send size={18} />
+                  Message
+                </button>
+                <button
+                  onClick={() => setChannelMode('poll')}
+                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+                    channelMode === 'poll'
+                      ? 'bg-primary text-white'
+                      : 'bg-surface-secondary text-foreground-secondary hover:bg-surface-secondary/80'
+                  }`}
+                >
+                  <BarChart2 size={18} />
+                  Poll
+                </button>
               </div>
 
-              {/* Media upload */}
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-foreground mb-2">
-                  Attach Media (optional)
-                </label>
-                <div className="flex items-center gap-4">
-                  <input
-                    ref={channelFileInputRef}
-                    type="file"
-                    accept="image/*,video/*,application/*"
-                    onChange={handleChannelFileSelect}
-                    className="hidden"
-                  />
-                  <button
-                    onClick={() => channelFileInputRef.current?.click()}
-                    className="flex items-center gap-2 px-4 py-2 bg-background border border-border rounded-lg hover:bg-surface transition-colors"
-                  >
-                    <Paperclip size={18} />
-                    {channelSelectedMedia ? 'Change File' : 'Attach File'}
-                  </button>
-                  {channelSelectedMedia && (
-                    <div className="flex items-center gap-2 px-3 py-2 bg-background rounded-lg">
-                      {channelSelectedMedia.type.startsWith('image/') ? (
-                        <Image size={18} className="text-blue-400" />
-                      ) : channelSelectedMedia.type.startsWith('video/') ? (
-                        <Film size={18} className="text-purple-400" />
-                      ) : (
-                        <FileText size={18} className="text-orange-400" />
-                      )}
-                      <span className="text-sm text-foreground truncate max-w-[200px]">
-                        {channelSelectedMedia.name}
-                      </span>
-                      <button onClick={clearChannelMedia} className="text-muted hover:text-red-400">
-                        <X size={18} />
+              {channelMode === 'message' ? (
+                <>
+                  {/* Message content */}
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-foreground mb-2">
+                      Message (optional if sending media)
+                    </label>
+                    <textarea
+                      value={channelContent}
+                      onChange={(e) => setChannelContent(e.target.value)}
+                      placeholder="Type your message here..."
+                      className="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary min-h-[150px]"
+                    />
+                    <div className="text-sm text-muted mt-1">{channelContent.length} characters</div>
+                  </div>
+
+                  {/* Media upload */}
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-foreground mb-2">
+                      Attach Media (optional)
+                    </label>
+                    <div className="flex items-center gap-4">
+                      <input
+                        ref={channelFileInputRef}
+                        type="file"
+                        accept="image/*,video/*,application/*"
+                        onChange={handleChannelFileSelect}
+                        className="hidden"
+                      />
+                      <button
+                        onClick={() => channelFileInputRef.current?.click()}
+                        className="flex items-center gap-2 px-4 py-2 bg-background border border-border rounded-lg hover:bg-surface transition-colors"
+                      >
+                        <Paperclip size={18} />
+                        {channelSelectedMedia ? 'Change File' : 'Attach File'}
                       </button>
+                      {channelSelectedMedia && (
+                        <div className="flex items-center gap-2 px-3 py-2 bg-background rounded-lg">
+                          {channelSelectedMedia.type.startsWith('image/') ? (
+                            <Image size={18} className="text-blue-400" />
+                          ) : channelSelectedMedia.type.startsWith('video/') ? (
+                            <Film size={18} className="text-purple-400" />
+                          ) : (
+                            <FileText size={18} className="text-orange-400" />
+                          )}
+                          <span className="text-sm text-foreground truncate max-w-[200px]">
+                            {channelSelectedMedia.name}
+                          </span>
+                          <button onClick={clearChannelMedia} className="text-muted hover:text-red-400">
+                            <X size={18} />
+                          </button>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-                {channelMediaPreview && (
-                  <img
-                    src={channelMediaPreview}
-                    alt="Preview"
-                    className="mt-2 max-w-[200px] rounded-lg"
-                  />
-                )}
-              </div>
+                    {channelMediaPreview && (
+                      <img
+                        src={channelMediaPreview}
+                        alt="Preview"
+                        className="mt-2 max-w-[200px] rounded-lg"
+                      />
+                    )}
+                  </div>
 
-              {/* Scheduling */}
-              <div className="mb-4">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={channelScheduleMode}
-                    onChange={(e) => setChannelScheduleMode(e.target.checked)}
-                    className="rounded border-border text-primary focus:ring-primary"
-                  />
-                  <span className="text-sm text-foreground">Schedule for later</span>
-                </label>
-                {channelScheduleMode && (
-                  <div className="mt-2">
+                  {/* Scheduling */}
+                  <div className="mb-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={channelScheduleMode}
+                        onChange={(e) => setChannelScheduleMode(e.target.checked)}
+                        className="rounded border-border text-primary focus:ring-primary"
+                      />
+                      <span className="text-sm text-foreground">Schedule for later</span>
+                    </label>
+                    {channelScheduleMode && (
+                      <div className="mt-2">
+                        <input
+                          type="datetime-local"
+                          value={channelScheduledDateTime}
+                          onChange={(e) => setChannelScheduledDateTime(e.target.value)}
+                          min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
+                          className="px-3 py-2 bg-background border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Send button */}
+                  <button
+                    onClick={handleSendChannelBroadcast}
+                    disabled={
+                      ((!channelContent.trim() && !channelSelectedMedia) ||
+                        selectedChannels.length === 0 ||
+                        (channelScheduleMode && !channelScheduledDateTime) ||
+                        sendChannelBroadcastMutation.isPending ||
+                        sendChannelBroadcastWithMediaMutation.isPending)
+                    }
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {sendChannelBroadcastMutation.isPending || sendChannelBroadcastWithMediaMutation.isPending ? (
+                      <Loader2 size={20} className="animate-spin" />
+                    ) : channelScheduleMode ? (
+                      <>
+                        <Calendar size={20} />
+                        Schedule to {selectedChannels.length} Channel{selectedChannels.length !== 1 ? 's' : ''}
+                      </>
+                    ) : channelSelectedMedia ? (
+                      <>
+                        <Send size={20} />
+                        Send Media to {selectedChannels.length} Channel{selectedChannels.length !== 1 ? 's' : ''}
+                      </>
+                    ) : (
+                      <>
+                        <Send size={20} />
+                        Send to {selectedChannels.length} Channel{selectedChannels.length !== 1 ? 's' : ''}
+                      </>
+                    )}
+                  </button>
+                </>
+              ) : (
+                <>
+                  {/* Poll Question */}
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-foreground mb-2">
+                      Poll Question
+                    </label>
                     <input
-                      type="datetime-local"
-                      value={channelScheduledDateTime}
-                      onChange={(e) => setChannelScheduledDateTime(e.target.value)}
-                      min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
-                      className="px-3 py-2 bg-background border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                      type="text"
+                      value={channelPollQuestion}
+                      onChange={(e) => setChannelPollQuestion(e.target.value)}
+                      placeholder="Ask your question..."
+                      className="w-full px-4 py-3 bg-background border border-border rounded-lg text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
                     />
                   </div>
-                )}
-              </div>
 
-              {/* Send button */}
-              <button
-                onClick={handleSendChannelBroadcast}
-                disabled={
-                  ((!channelContent.trim() && !channelSelectedMedia) ||
-                    selectedChannels.length === 0 ||
-                    (channelScheduleMode && !channelScheduledDateTime) ||
-                    sendChannelBroadcastMutation.isPending ||
-                    sendChannelBroadcastWithMediaMutation.isPending)
-                }
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {sendChannelBroadcastMutation.isPending || sendChannelBroadcastWithMediaMutation.isPending ? (
-                  <Loader2 size={20} className="animate-spin" />
-                ) : channelScheduleMode ? (
-                  <>
-                    <Calendar size={20} />
-                    Schedule to {selectedChannels.length} Channel{selectedChannels.length !== 1 ? 's' : ''}
-                  </>
-                ) : channelSelectedMedia ? (
-                  <>
-                    <Send size={20} />
-                    Send Media to {selectedChannels.length} Channel{selectedChannels.length !== 1 ? 's' : ''}
-                  </>
-                ) : (
-                  <>
-                    <Send size={20} />
-                    Send to {selectedChannels.length} Channel{selectedChannels.length !== 1 ? 's' : ''}
-                  </>
-                )}
-              </button>
+                  {/* Poll Options */}
+                  <div className="mb-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="block text-sm font-medium text-foreground">
+                        Options ({channelPollOptions.length}/12)
+                      </label>
+                      <button
+                        onClick={addChannelPollOption}
+                        disabled={channelPollOptions.length >= 12}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-primary text-white rounded-lg text-sm hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <Plus size={16} />
+                        Add
+                      </button>
+                    </div>
+                    <div className="space-y-2">
+                      {channelPollOptions.map((option, index) => (
+                        <div key={index} className="flex items-center gap-2">
+                          <span className="text-muted text-sm w-6">{index + 1}.</span>
+                          <input
+                            type="text"
+                            value={option}
+                            onChange={(e) => updateChannelPollOption(index, e.target.value)}
+                            placeholder={`Option ${index + 1}`}
+                            className="flex-1 px-4 py-2 bg-background border border-border rounded-lg text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
+                          />
+                          {channelPollOptions.length > 2 && (
+                            <button
+                              onClick={() => removeChannelPollOption(index)}
+                              className="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition-colors"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Allow Multiple Answers */}
+                  <div className="mb-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <label className="text-sm font-medium text-foreground">
+                          Allow Multiple Answers
+                        </label>
+                        <p className="text-xs text-muted">
+                          Users can select more than one option
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => setChannelPollAllowMultiple(!channelPollAllowMultiple)}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                          channelPollAllowMultiple ? 'bg-primary' : 'bg-surface-secondary'
+                        }`}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                            channelPollAllowMultiple ? 'translate-x-6' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Scheduling */}
+                  <div className="mb-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={channelScheduleMode}
+                        onChange={(e) => setChannelScheduleMode(e.target.checked)}
+                        className="rounded border-border text-primary focus:ring-primary"
+                      />
+                      <span className="text-sm text-foreground">Schedule for later</span>
+                    </label>
+                    {channelScheduleMode && (
+                      <div className="mt-2">
+                        <input
+                          type="datetime-local"
+                          value={channelScheduledDateTime}
+                          onChange={(e) => setChannelScheduledDateTime(e.target.value)}
+                          min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
+                          className="px-3 py-2 bg-background border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Send Poll Button */}
+                  <button
+                    onClick={handleSendChannelPoll}
+                    disabled={
+                      !channelPollQuestion.trim() ||
+                      channelPollOptions.filter(opt => opt.trim()).length < 2 ||
+                      selectedChannels.length === 0 ||
+                      sendChannelPollMutation.isPending ||
+                      (channelScheduleMode && !channelScheduledDateTime)
+                    }
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {sendChannelPollMutation.isPending ? (
+                      <Loader2 size={20} className="animate-spin" />
+                    ) : channelScheduleMode ? (
+                      <>
+                        <Calendar size={20} />
+                        Schedule Poll to {selectedChannels.length} Channel{selectedChannels.length !== 1 ? 's' : ''}
+                      </>
+                    ) : (
+                      <>
+                        <BarChart2 size={20} />
+                        Send Poll to {selectedChannels.length} Channel{selectedChannels.length !== 1 ? 's' : ''}
+                      </>
+                    )}
+                  </button>
+                </>
+              )}
 
               <p className="text-xs text-muted mt-2 text-center">
                 Note: Channels don't support mentions.
@@ -1653,6 +1910,10 @@ export default function BroadcastPage() {
                       <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs font-medium">
                         Poll
                       </span>
+                    ) : msg.task_type === 'channel_poll' ? (
+                      <span className="px-2 py-0.5 bg-teal-500/20 text-teal-400 rounded text-xs font-medium">
+                        Channel Poll
+                      </span>
                     ) : msg.task_type === 'channel_broadcast' ? (
                       <span className="px-2 py-0.5 bg-green-500/20 text-green-400 rounded text-xs font-medium">
                         Channel
@@ -1667,7 +1928,7 @@ export default function BroadcastPage() {
                     </span>
                   </div>
                   <p className="text-foreground mb-2">
-                    {msg.task_type === 'poll' ? `📊 ${msg.content}` : msg.content}
+                    {(msg.task_type === 'poll' || msg.task_type === 'channel_poll') ? `📊 ${msg.content}` : msg.content}
                   </p>
                   {msg.poll_options && (
                     <div className="mb-2 space-y-1">
@@ -1680,7 +1941,7 @@ export default function BroadcastPage() {
                     </div>
                   )}
                   <div className="flex flex-wrap gap-1">
-                    {msg.task_type === 'channel_broadcast' ? (
+                    {(msg.task_type === 'channel_broadcast' || msg.task_type === 'channel_poll') ? (
                       msg.channel_names?.map((name, i) => (
                         <span
                           key={i}
@@ -1742,6 +2003,10 @@ export default function BroadcastPage() {
                       <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs font-medium">
                         Poll
                       </span>
+                    ) : broadcast.task_type === 'channel_poll' ? (
+                      <span className="px-2 py-0.5 bg-teal-500/20 text-teal-400 rounded text-xs font-medium">
+                        Channel Poll
+                      </span>
                     ) : broadcast.task_type === 'channel_broadcast' ? (
                       <span className="px-2 py-0.5 bg-green-500/20 text-green-400 rounded text-xs font-medium">
                         Channel
@@ -1760,11 +2025,11 @@ export default function BroadcastPage() {
                     </span>
                   </div>
                   <div className="text-sm text-muted">
-                    {broadcast.groups_sent}/{broadcast.groups_sent + broadcast.groups_failed} {broadcast.task_type === 'channel_broadcast' ? 'channels' : 'groups'}
+                    {broadcast.groups_sent}/{broadcast.groups_sent + broadcast.groups_failed} {(broadcast.task_type === 'channel_broadcast' || broadcast.task_type === 'channel_poll') ? 'channels' : 'groups'}
                   </div>
                 </div>
                 <p className="text-foreground mb-3">
-                  {broadcast.task_type === 'poll' ? `📊 ${broadcast.content}` : broadcast.content}
+                  {(broadcast.task_type === 'poll' || broadcast.task_type === 'channel_poll') ? `📊 ${broadcast.content}` : broadcast.content}
                 </p>
                 {broadcast.poll_options && (
                   <div className="mb-3 space-y-1">
@@ -1777,7 +2042,7 @@ export default function BroadcastPage() {
                   </div>
                 )}
                 <div className="flex flex-wrap gap-1 mb-2">
-                  {broadcast.task_type === 'channel_broadcast' ? (
+                  {(broadcast.task_type === 'channel_broadcast' || broadcast.task_type === 'channel_poll') ? (
                     broadcast.channel_names?.map((name, i) => (
                       <span
                         key={i}

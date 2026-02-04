@@ -775,6 +775,26 @@ class ApiClient {
     return response.json()
   }
 
+  async sendChannelPollBroadcast(data: {
+    question: string
+    options: string[]
+    allow_multiple_answers: boolean
+    channel_ids: string[]
+    channel_names: string[]
+    scheduled_at?: string
+  }) {
+    return this.request<{
+      success: boolean
+      message_id: number
+      scheduled: boolean
+      scheduled_at: string | null
+      channels: string[]
+    }>('/api/broadcast/send-channel-poll', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  }
+
   async getScheduledMessages() {
     return this.request<Array<{
       id: number

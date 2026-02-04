@@ -339,6 +339,30 @@ class WhatsAppBridge:
             except httpx.RequestError as e:
                 return {"success": False, "error": str(e)}
 
+    async def send_channel_poll(
+        self,
+        user_id: int,
+        channel_id: str,
+        question: str,
+        options: List[str],
+        allow_multiple_answers: bool = False
+    ) -> Dict[str, Any]:
+        """Send a poll to a channel"""
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    f"{self.base_url}/api/clients/{user_id}/channels/{channel_id}/send-poll",
+                    json={
+                        "question": question,
+                        "options": options,
+                        "allowMultipleAnswers": allow_multiple_answers
+                    },
+                    timeout=60.0
+                )
+                return response.json()
+            except httpx.RequestError as e:
+                return {"success": False, "error": str(e)}
+
 
 # Singleton instance
 whatsapp_bridge = WhatsAppBridge()

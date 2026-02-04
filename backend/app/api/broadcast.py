@@ -44,6 +44,15 @@ class SendChannelBroadcastRequest(BaseModel):
     scheduled_at: Optional[datetime] = None  # If None, send immediately
 
 
+class SendChannelPollRequest(BaseModel):
+    question: str
+    options: List[str]
+    allow_multiple_answers: bool = False
+    channel_ids: List[str]  # List of WhatsApp channel IDs
+    channel_names: List[str]  # Names for display
+    scheduled_at: Optional[datetime] = None  # If None, send immediately
+
+
 class ScheduledMessageResponse(BaseModel):
     id: int
     content: str
@@ -391,6 +400,100 @@ async def send_immediate_channel_broadcast(
         })
 
 
+async def send_immediate_channel_poll(
+    user_id: int,
+    scheduled_msg: ScheduledMessage,
+    db: Session
+):
+    """Send channel poll immediately with 30-second delays between channels"""
+    try:
+        channel_ids = scheduled_msg.channel_ids or []
+        channel_names = scheduled_msg.channel_names or []
+        channels_sent = 0
+        channels_failed = 0
+        errors = []
+
+        # Mark as sending
+        scheduled_msg.status = 'sending'
+        db.commit()
+
+        for i, channel_id in enumerate(channel_ids):
+            # 30-second delay between channels (except first)
+            if i > 0:
+                await asyncio.sleep(30)
+
+            try:
+                channel_name = channel_names[i] if i < len(channel_names) else channel_id
+
+                # Send the poll to channel
+                result = await whatsapp_bridge.send_channel_poll(
+                    user_id=user_id,
+                    channel_id=channel_id,
+                    question=scheduled_msg.content,
+                    options=scheduled_msg.poll_options or [],
+                    allow_multiple_answers=scheduled_msg.poll_allow_multiple or False
+                )
+
+                if result.get('success'):
+                    channels_sent += 1
+
+                    # Notify progress via WebSocket
+                    await websocket_manager.send_to_user(user_id, {
+                        'type': 'channel_poll_progress',
+                        'message_id': scheduled_msg.id,
+                        'channel_name': channel_name,
+                        'channels_sent': channels_sent,
+                        'total_channels': len(channel_ids)
+                    })
+                else:
+                    channels_failed += 1
+                    error_msg = result.get('error', 'Unknown error')
+                    errors.append(f"{channel_name}: {error_msg}")
+
+            except Exception as e:
+                channels_failed += 1
+                errors.append(f"Channel {channel_id}: {str(e)}")
+
+        # Update final status
+        scheduled_msg.groups_sent = channels_sent
+        scheduled_msg.groups_failed = channels_failed
+        scheduled_msg.sent_at = datetime.utcnow()
+
+        if channels_failed == 0:
+            scheduled_msg.status = 'sent'
+        elif channels_sent == 0:
+            scheduled_msg.status = 'failed'
+        else:
+            scheduled_msg.status = 'partially_sent'
+
+        if errors:
+            scheduled_msg.error_message = "; ".join(errors)
+
+        db.commit()
+
+        # Notify completion via WebSocket
+        await websocket_manager.send_to_user(user_id, {
+            'type': 'channel_poll_complete',
+            'message_id': scheduled_msg.id,
+            'status': scheduled_msg.status,
+            'channels_sent': channels_sent,
+            'channels_failed': channels_failed,
+            'error_message': scheduled_msg.error_message
+        })
+
+    except Exception as e:
+        scheduled_msg.status = 'failed'
+        scheduled_msg.error_message = str(e)
+        db.commit()
+
+        await websocket_manager.send_to_user(user_id, {
+            'type': 'channel_poll_complete',
+            'message_id': scheduled_msg.id,
+            'status': 'failed',
+            'error_message': str(e)
+        })
+
+
 @router.post("/send")
 async def send_broadcast(
     request: SendBroadcastRequest,
@@ -612,6 +715,7 @@ def get_scheduled_messages(
             ScheduledMessage.task_type == 'broadcast',
             ScheduledMessage.task_type == 'poll',
             ScheduledMessage.task_type == 'channel_broadcast',
+            ScheduledMessage.task_type == 'channel_poll',
             ScheduledMessage.task_type.is_(None)
         )
     ).order_by(ScheduledMessage.scheduled_at).all()
@@ -627,7 +731,7 @@ def get_scheduled_messages(
             "scheduled_at": msg.scheduled_at.isoformat() if msg.scheduled_at else None,
             "status": msg.status,
             "created_at": msg.created_at.isoformat() if msg.created_at else None,
-            "poll_options": msg.poll_options if msg.task_type == 'poll' else None
+            "poll_options": msg.poll_options if msg.task_type in ['poll', 'channel_poll'] else None
         }
         for msg in messages
     ]
@@ -649,6 +753,7 @@ def get_broadcast_history(
             ScheduledMessage.task_type == 'broadcast',
             ScheduledMessage.task_type == 'poll',
             ScheduledMessage.task_type == 'channel_broadcast',
+            ScheduledMessage.task_type == 'channel_poll',
             ScheduledMessage.task_type.is_(None)
         )
     )
@@ -676,7 +781,7 @@ def get_broadcast_history(
                 "groups_failed": msg.groups_failed or 0,
                 "error_message": msg.error_message,
                 "created_at": msg.created_at.isoformat() if msg.created_at else None,
-                "poll_options": msg.poll_options if msg.task_type == 'poll' else None
+                "poll_options": msg.poll_options if msg.task_type in ['poll', 'channel_poll'] else None
             }
             for msg in messages
         ],
@@ -961,6 +1066,74 @@ async def send_channel_broadcast_with_media(
         "scheduled_at": final_scheduled_at.isoformat() if parsed_scheduled_at else None,
         "channels": parsed_channel_names,
         "has_media": True
+    }
+
+
+@router.post("/send-channel-poll")
+async def send_channel_poll_broadcast(
+    request: SendChannelPollRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Send a poll to multiple channels (immediate or scheduled)"""
+
+    if not request.question:
+        raise HTTPException(status_code=400, detail="Poll question is required")
+
+    if not request.options or len(request.options) < 2:
+        raise HTTPException(status_code=400, detail="Poll must have at least 2 options")
+
+    if len(request.options) > 12:
+        raise HTTPException(status_code=400, detail="Poll cannot have more than 12 options")
+
+    if not request.channel_ids:
+        raise HTTPException(status_code=400, detail="At least one channel is required")
+
+    if len(request.channel_ids) != len(request.channel_names):
+        raise HTTPException(status_code=400, detail="channel_ids and channel_names must have the same length")
+
+    # Determine scheduled time
+    if request.scheduled_at:
+        scheduled_at = request.scheduled_at.replace(tzinfo=None) if request.scheduled_at.tzinfo else request.scheduled_at
+        if scheduled_at <= datetime.utcnow():
+            raise HTTPException(status_code=400, detail="Scheduled time must be in the future")
+        status = 'pending'
+    else:
+        scheduled_at = datetime.utcnow()
+        status = 'sending'
+
+    # Create scheduled message record
+    scheduled_msg = ScheduledMessage(
+        user_id=current_user.id,
+        task_type='channel_poll',
+        content=request.question,
+        poll_options=request.options,
+        poll_allow_multiple=request.allow_multiple_answers,
+        channel_ids=request.channel_ids,
+        channel_names=request.channel_names,
+        scheduled_at=scheduled_at,
+        status=status
+    )
+    db.add(scheduled_msg)
+    db.commit()
+    db.refresh(scheduled_msg)
+
+    # If immediate send, execute in background
+    if not request.scheduled_at:
+        background_tasks.add_task(
+            send_immediate_channel_poll,
+            current_user.id,
+            scheduled_msg,
+            db
+        )
+
+    return {
+        "success": True,
+        "message_id": scheduled_msg.id,
+        "scheduled": request.scheduled_at is not None,
+        "scheduled_at": scheduled_at.isoformat() if request.scheduled_at else None,
+        "channels": request.channel_names
     }
 
 

@@ -1176,6 +1176,57 @@ class ClientManager {
         });
     }
 
+    async sendChannelPoll(userId, channelId, question, pollOptions, allowMultipleAnswers = false) {
+        const client = this.clients.get(userId);
+        if (!client || this.clientStatus.get(userId) !== 'ready') {
+            throw new Error('Client not ready');
+        }
+
+        // Validate poll options (WhatsApp requires 2-12 options)
+        if (!pollOptions || pollOptions.length < 2) {
+            throw new Error('Poll must have at least 2 options');
+        }
+        if (pollOptions.length > 12) {
+            throw new Error('Poll cannot have more than 12 options');
+        }
+
+        // Use operation queue to prevent concurrent calls
+        return this._queueOperation(userId, async () => {
+            try {
+                console.log(`[CHANNEL POLL] Sending poll to channel ${channelId} for user ${userId}: "${question}" with ${pollOptions.length} options`);
+
+                // Create Poll object
+                const poll = new Poll(question, pollOptions, {
+                    allowMultipleAnswers: allowMultipleAnswers
+                });
+
+                // Send poll to channel
+                const result = await client.sendMessage(channelId, poll, {
+                    sendSeen: false
+                });
+
+                return {
+                    success: true,
+                    messageId: result.id._serialized,
+                    timestamp: result.timestamp,
+                    channelId: channelId,
+                    question: question,
+                    optionsCount: pollOptions.length
+                };
+            } catch (error) {
+                console.error(`Error sending poll to channel ${channelId} for user ${userId}:`, error.message);
+
+                if (error.message && (error.message.includes('detached Frame') || error.message.includes('timed out'))) {
+                    if (error.message.includes('detached Frame')) {
+                        this.clientStatus.set(userId, 'disconnected');
+                    }
+                }
+
+                throw error;
+            }
+        });
+    }
+
     async destroyClient(userId) {
         const client = this.clients.get(userId);
         if (client) {
