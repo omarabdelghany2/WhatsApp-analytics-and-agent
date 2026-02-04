@@ -17,3 +17,16 @@ index f68491f..40e96f1 100644
              window.AuthStore.Cmd.on('offline_progress_update', () => {
                  window.onOfflineProgressUpdateEvent(window.AuthStore.OfflineMessageHandler.getOfflineDeliveryProgress()); 
              });
+diff --git a/node_modules/whatsapp-web.js/src/structures/Channel.js b/node_modules/whatsapp-web.js/src/structures/Channel.js
+index f7ed110..789782b 100644
+--- a/node_modules/whatsapp-web.js/src/structures/Channel.js
++++ b/node_modules/whatsapp-web.js/src/structures/Channel.js
+@@ -41,7 +41,7 @@ class Channel extends Base {
+          * The channel description
+          * @type {string}
+          */
+-        this.description = data.channelMetadata.description;
++        this.description = data.channelMetadata?.description || '';
+ 
+         /**
+          * Indicates if it is a Channel
