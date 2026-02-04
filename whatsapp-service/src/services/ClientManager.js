@@ -1044,11 +1044,20 @@ class ClientManager {
                 const channels = await client.getChannels();
                 console.log(`[CHANNELS] Got ${channels ? channels.length : 0} channels for user ${userId}`);
 
-                return channels.map(channel => ({
-                    id: channel.id._serialized,
-                    name: channel.name,
-                    description: channel.description || ''
-                }));
+                // Filter out undefined/invalid channels and safely map properties
+                const validChannels = (channels || [])
+                    .filter(channel => channel && channel.id)
+                    .map(channel => {
+                        console.log(`[CHANNELS] Processing channel:`, channel.name, channel.id?._serialized);
+                        return {
+                            id: channel.id?._serialized || String(channel.id),
+                            name: channel.name || 'Unknown Channel',
+                            description: channel.description || ''
+                        };
+                    });
+
+                console.log(`[CHANNELS] Returning ${validChannels.length} valid channels for user ${userId}`);
+                return validChannels;
             } catch (error) {
                 console.error(`[CHANNELS] Error getting channels for user ${userId}:`, error.message);
 
