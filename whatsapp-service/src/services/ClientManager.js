@@ -1024,6 +1024,149 @@ class ClientManager {
         });
     }
 
+    // ==================== CHANNEL METHODS ====================
+
+    async getChannels(userId) {
+        const client = this.clients.get(userId);
+        const status = this.clientStatus.get(userId);
+
+        console.log(`[CHANNELS] getChannels called for user ${userId}, client exists: ${!!client}, status: ${status}`);
+
+        if (!client || status !== 'ready') {
+            console.log(`[CHANNELS] Returning empty - client not ready for user ${userId}`);
+            return [];
+        }
+
+        // Use operation queue to prevent concurrent calls
+        return this._queueOperation(userId, async () => {
+            try {
+                console.log(`[CHANNELS] Fetching channels for user ${userId}...`);
+                const channels = await client.getChannels();
+                console.log(`[CHANNELS] Got ${channels ? channels.length : 0} channels for user ${userId}`);
+
+                return channels.map(channel => ({
+                    id: channel.id._serialized,
+                    name: channel.name,
+                    description: channel.description || ''
+                }));
+            } catch (error) {
+                console.error(`[CHANNELS] Error getting channels for user ${userId}:`, error.message);
+
+                if (error.message && (error.message.includes('detached Frame') || error.message.includes('timed out'))) {
+                    if (error.message.includes('detached Frame')) {
+                        this.clientStatus.set(userId, 'disconnected');
+                    }
+                }
+
+                return [];
+            }
+        });
+    }
+
+    async sendChannelMessage(userId, channelId, content) {
+        const client = this.clients.get(userId);
+        if (!client || this.clientStatus.get(userId) !== 'ready') {
+            throw new Error('Client not ready');
+        }
+
+        // Use operation queue to prevent concurrent calls
+        return this._queueOperation(userId, async () => {
+            try {
+                console.log(`[CHANNEL] Sending message to channel ${channelId} for user ${userId}`);
+
+                const channel = await client.getChatById(channelId);
+                if (!channel) {
+                    throw new Error('Channel not found');
+                }
+
+                const result = await channel.sendMessage(content);
+
+                return {
+                    success: true,
+                    messageId: result.id._serialized,
+                    timestamp: result.timestamp,
+                    channelId: channelId
+                };
+            } catch (error) {
+                console.error(`Error sending message to channel ${channelId} for user ${userId}:`, error.message);
+
+                if (error.message && (error.message.includes('detached Frame') || error.message.includes('timed out'))) {
+                    if (error.message.includes('detached Frame')) {
+                        this.clientStatus.set(userId, 'disconnected');
+                    }
+                }
+
+                throw error;
+            }
+        });
+    }
+
+    async sendChannelMediaMessage(userId, channelId, mediaPath, caption = '') {
+        const client = this.clients.get(userId);
+        if (!client || this.clientStatus.get(userId) !== 'ready') {
+            throw new Error('Client not ready');
+        }
+
+        // Check if file exists before queuing
+        if (!fs.existsSync(mediaPath)) {
+            throw new Error('Media file not found');
+        }
+
+        // Use operation queue to prevent concurrent calls
+        return this._queueOperation(userId, async () => {
+            try {
+                console.log(`[CHANNEL] Sending media to channel ${channelId} for user ${userId}`);
+
+                // Create MessageMedia from file
+                const media = MessageMedia.fromFilePath(mediaPath);
+
+                const channel = await client.getChatById(channelId);
+                if (!channel) {
+                    throw new Error('Channel not found');
+                }
+
+                const sendOptions = {
+                    caption: caption || undefined
+                };
+
+                const result = await channel.sendMessage(media, sendOptions);
+
+                // Clean up uploaded file after sending
+                try {
+                    fs.unlinkSync(mediaPath);
+                } catch (e) {
+                    console.log(`[WARN] Could not delete temp file: ${e.message}`);
+                }
+
+                return {
+                    success: true,
+                    messageId: result.id._serialized,
+                    timestamp: result.timestamp,
+                    channelId: channelId
+                };
+            } catch (error) {
+                console.error(`Error sending media to channel ${channelId} for user ${userId}:`, error.message);
+
+                // Clean up uploaded file on error
+                try {
+                    if (fs.existsSync(mediaPath)) {
+                        fs.unlinkSync(mediaPath);
+                    }
+                } catch (e) {
+                    // Ignore cleanup errors
+                }
+
+                if (error.message && (error.message.includes('detached Frame') || error.message.includes('timed out'))) {
+                    if (error.message.includes('detached Frame')) {
+                        this.clientStatus.set(userId, 'disconnected');
+                    }
+                }
+
+                throw error;
+            }
+        });
+    }
+
     async destroyClient(userId) {
         const client = this.clients.get(userId);
         if (client) {

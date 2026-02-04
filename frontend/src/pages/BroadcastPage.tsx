@@ -26,7 +26,7 @@ import {
 } from 'lucide-react'
 import { format } from 'date-fns'
 
-type Tab = 'compose' | 'poll' | 'scheduled' | 'history'
+type Tab = 'compose' | 'poll' | 'channels' | 'scheduled' | 'history'
 type MentionType = 'none' | 'all' | 'selected'
 
 interface Group {
@@ -35,6 +35,12 @@ interface Group {
   group_name: string
   member_count: number
   is_active: boolean
+}
+
+interface Channel {
+  id: string
+  name: string
+  description: string
 }
 
 interface Member {
@@ -100,6 +106,21 @@ export default function BroadcastPage() {
   const [pollProgress, setPollProgress] = useState<{ group_name: string; groups_sent: number; total_groups: number } | null>(null)
   const [pollResult, setPollResult] = useState<{ groups_sent: number; groups_failed: number; error_message: string | null } | null>(null)
 
+  // Channel state
+  const [channelContent, setChannelContent] = useState('')
+  const [selectedChannels, setSelectedChannels] = useState<Channel[]>([])
+  const [channelScheduleMode, setChannelScheduleMode] = useState(false)
+  const [channelScheduledDateTime, setChannelScheduledDateTime] = useState('')
+  const [channelsExpanded, setChannelsExpanded] = useState(true)
+  const [channelSelectedMedia, setChannelSelectedMedia] = useState<File | null>(null)
+  const [channelMediaPreview, setChannelMediaPreview] = useState<string | null>(null)
+  const channelFileInputRef = useRef<HTMLInputElement>(null)
+
+  // Channel progress state
+  const [showChannelProgressModal, setShowChannelProgressModal] = useState(false)
+  const [channelProgress, setChannelProgress] = useState<{ channel_name: string; channels_sent: number; total_channels: number } | null>(null)
+  const [channelResult, setChannelResult] = useState<{ channels_sent: number; channels_failed: number; error_message: string | null } | null>(null)
+
   // Progress modal state
   const [showProgressModal, setShowProgressModal] = useState(false)
   const [currentProgress, setCurrentProgress] = useState<BroadcastProgress | null>(null)
@@ -121,6 +142,13 @@ export default function BroadcastPage() {
   const { data: historyData, refetch: refetchHistory } = useQuery({
     queryKey: ['broadcast-history'],
     queryFn: () => api.getBroadcastHistory(50, 0),
+  })
+
+  // Fetch channels
+  const { data: channelsData, isLoading: channelsLoading } = useQuery({
+    queryKey: ['channels'],
+    queryFn: () => api.getChannels(),
+    enabled: activeTab === 'channels',
   })
 
   // Fetch members for selected groups
@@ -307,6 +335,70 @@ export default function BroadcastPage() {
     },
   })
 
+  // Send channel broadcast mutation (text only)
+  const sendChannelBroadcastMutation = useMutation({
+    mutationFn: (data: {
+      content: string
+      channel_ids: string[]
+      channel_names: string[]
+      scheduled_at?: string
+    }) => api.sendChannelBroadcast(data),
+    onSuccess: (result) => {
+      if (!result.scheduled) {
+        setShowChannelProgressModal(true)
+        setChannelProgress(null)
+        setChannelResult(null)
+      } else {
+        resetChannelForm()
+        refetchScheduled()
+        setActiveTab('scheduled')
+      }
+    },
+    onError: (error) => {
+      setChannelResult({
+        channels_sent: 0,
+        channels_failed: selectedChannels.length,
+        error_message: (error as Error).message,
+      })
+    },
+  })
+
+  // Send channel broadcast with media mutation
+  const sendChannelBroadcastWithMediaMutation = useMutation({
+    mutationFn: (data: {
+      media: File
+      channelIds: string[]
+      channelNames: string[]
+      content?: string
+      scheduledAt?: string
+    }) =>
+      api.sendChannelBroadcastWithMedia(
+        data.media,
+        data.channelIds,
+        data.channelNames,
+        data.content,
+        data.scheduledAt
+      ),
+    onSuccess: (result) => {
+      if (!result.scheduled) {
+        setShowChannelProgressModal(true)
+        setChannelProgress(null)
+        setChannelResult(null)
+      } else {
+        resetChannelForm()
+        refetchScheduled()
+        setActiveTab('scheduled')
+      }
+    },
+    onError: (error) => {
+      setChannelResult({
+        channels_sent: 0,
+        channels_failed: selectedChannels.length,
+        error_message: (error as Error).message,
+      })
+    },
+  })
+
   // Subscribe to WebSocket events
   useEffect(() => {
     const unsubProgress = subscribe('broadcast_progress', (data) => {
@@ -332,11 +424,24 @@ export default function BroadcastPage() {
       setPollProgress(null)
     })
 
+    const unsubChannelProgress = subscribe('channel_broadcast_progress', (data) => {
+      const progress = data as unknown as { channel_name: string; channels_sent: number; total_channels: number }
+      setChannelProgress(progress)
+    })
+
+    const unsubChannelComplete = subscribe('channel_broadcast_complete', (data) => {
+      const result = data as unknown as { channels_sent: number; channels_failed: number; error_message: string | null }
+      setChannelResult(result)
+      setChannelProgress(null)
+    })
+
     return () => {
       unsubProgress()
       unsubComplete()
       unsubPollProgress()
       unsubPollComplete()
+      unsubChannelProgress()
+      unsubChannelComplete()
     }
   }, [subscribe, refetchHistory])
 
@@ -527,6 +632,85 @@ export default function BroadcastPage() {
     }
   }
 
+  // Reset channel form
+  const resetChannelForm = () => {
+    setChannelContent('')
+    setSelectedChannels([])
+    setChannelScheduleMode(false)
+    setChannelScheduledDateTime('')
+    setChannelSelectedMedia(null)
+    setChannelMediaPreview(null)
+    if (channelFileInputRef.current) {
+      channelFileInputRef.current.value = ''
+    }
+  }
+
+  // Handle channel file selection
+  const handleChannelFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      setChannelSelectedMedia(file)
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader()
+        reader.onload = (e) => setChannelMediaPreview(e.target?.result as string)
+        reader.readAsDataURL(file)
+      } else {
+        setChannelMediaPreview(null)
+      }
+    }
+  }
+
+  // Clear channel media
+  const clearChannelMedia = () => {
+    setChannelSelectedMedia(null)
+    setChannelMediaPreview(null)
+    if (channelFileInputRef.current) {
+      channelFileInputRef.current.value = ''
+    }
+  }
+
+  // Toggle channel selection
+  const toggleChannel = (channel: Channel) => {
+    setSelectedChannels((prev) =>
+      prev.some((c) => c.id === channel.id)
+        ? prev.filter((c) => c.id !== channel.id)
+        : [...prev, channel]
+    )
+  }
+
+  // Handle send channel broadcast
+  const handleSendChannelBroadcast = () => {
+    if (!channelContent.trim() && !channelSelectedMedia) return
+    if (selectedChannels.length === 0) return
+
+    if (channelScheduleMode && !channelScheduledDateTime) return
+
+    const scheduledAt = channelScheduleMode
+      ? new Date(channelScheduledDateTime).toISOString()
+      : undefined
+
+    if (channelSelectedMedia) {
+      sendChannelBroadcastWithMediaMutation.mutate({
+        media: channelSelectedMedia,
+        channelIds: selectedChannels.map((c) => c.id),
+        channelNames: selectedChannels.map((c) => c.name),
+        content: channelContent.trim() || undefined,
+        scheduledAt,
+      })
+    } else {
+      sendChannelBroadcastMutation.mutate({
+        content: channelContent.trim(),
+        channel_ids: selectedChannels.map((c) => c.id),
+        channel_names: selectedChannels.map((c) => c.name),
+        scheduled_at: scheduledAt,
+      })
+    }
+
+    if (channelScheduleMode) {
+      resetChannelForm()
+    }
+  }
+
   // Render status badge
   const renderStatusBadge = (status: string) => {
     const styles: Record<string, string> = {
@@ -571,6 +755,17 @@ export default function BroadcastPage() {
         >
           <BarChart2 size={16} className="inline mr-2" />
           Poll
+        </button>
+        <button
+          onClick={() => setActiveTab('channels')}
+          className={`px-4 py-2 font-medium transition-colors ${
+            activeTab === 'channels'
+              ? 'text-primary border-b-2 border-primary'
+              : 'text-muted hover:text-foreground'
+          }`}
+        >
+          <Users size={16} className="inline mr-2" />
+          Channels
         </button>
         <button
           onClick={() => setActiveTab('scheduled')}
@@ -1167,6 +1362,281 @@ export default function BroadcastPage() {
         </div>
       )}
 
+      {/* Channels Tab */}
+      {activeTab === 'channels' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left: Message compose */}
+          <div className="lg:col-span-2 space-y-4">
+            <div className="bg-surface rounded-lg p-4">
+              <h3 className="text-lg font-medium text-foreground mb-4">Broadcast to Channels</h3>
+
+              {/* Message content */}
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-foreground mb-2">
+                  Message (optional if sending media)
+                </label>
+                <textarea
+                  value={channelContent}
+                  onChange={(e) => setChannelContent(e.target.value)}
+                  placeholder="Type your message here..."
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary min-h-[150px]"
+                />
+                <div className="text-sm text-muted mt-1">{channelContent.length} characters</div>
+              </div>
+
+              {/* Media upload */}
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-foreground mb-2">
+                  Attach Media (optional)
+                </label>
+                <div className="flex items-center gap-4">
+                  <input
+                    ref={channelFileInputRef}
+                    type="file"
+                    accept="image/*,video/*,application/*"
+                    onChange={handleChannelFileSelect}
+                    className="hidden"
+                  />
+                  <button
+                    onClick={() => channelFileInputRef.current?.click()}
+                    className="flex items-center gap-2 px-4 py-2 bg-background border border-border rounded-lg hover:bg-surface transition-colors"
+                  >
+                    <Paperclip size={18} />
+                    {channelSelectedMedia ? 'Change File' : 'Attach File'}
+                  </button>
+                  {channelSelectedMedia && (
+                    <div className="flex items-center gap-2 px-3 py-2 bg-background rounded-lg">
+                      {channelSelectedMedia.type.startsWith('image/') ? (
+                        <Image size={18} className="text-blue-400" />
+                      ) : channelSelectedMedia.type.startsWith('video/') ? (
+                        <Film size={18} className="text-purple-400" />
+                      ) : (
+                        <FileText size={18} className="text-orange-400" />
+                      )}
+                      <span className="text-sm text-foreground truncate max-w-[200px]">
+                        {channelSelectedMedia.name}
+                      </span>
+                      <button onClick={clearChannelMedia} className="text-muted hover:text-red-400">
+                        <X size={18} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {channelMediaPreview && (
+                  <img
+                    src={channelMediaPreview}
+                    alt="Preview"
+                    className="mt-2 max-w-[200px] rounded-lg"
+                  />
+                )}
+              </div>
+
+              {/* Scheduling */}
+              <div className="mb-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={channelScheduleMode}
+                    onChange={(e) => setChannelScheduleMode(e.target.checked)}
+                    className="rounded border-border text-primary focus:ring-primary"
+                  />
+                  <span className="text-sm text-foreground">Schedule for later</span>
+                </label>
+                {channelScheduleMode && (
+                  <div className="mt-2">
+                    <input
+                      type="datetime-local"
+                      value={channelScheduledDateTime}
+                      onChange={(e) => setChannelScheduledDateTime(e.target.value)}
+                      min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
+                      className="px-3 py-2 bg-background border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Send button */}
+              <button
+                onClick={handleSendChannelBroadcast}
+                disabled={
+                  ((!channelContent.trim() && !channelSelectedMedia) ||
+                    selectedChannels.length === 0 ||
+                    (channelScheduleMode && !channelScheduledDateTime) ||
+                    sendChannelBroadcastMutation.isPending ||
+                    sendChannelBroadcastWithMediaMutation.isPending)
+                }
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {sendChannelBroadcastMutation.isPending || sendChannelBroadcastWithMediaMutation.isPending ? (
+                  <Loader2 size={20} className="animate-spin" />
+                ) : channelScheduleMode ? (
+                  <>
+                    <Calendar size={20} />
+                    Schedule to {selectedChannels.length} Channel{selectedChannels.length !== 1 ? 's' : ''}
+                  </>
+                ) : channelSelectedMedia ? (
+                  <>
+                    <Send size={20} />
+                    Send Media to {selectedChannels.length} Channel{selectedChannels.length !== 1 ? 's' : ''}
+                  </>
+                ) : (
+                  <>
+                    <Send size={20} />
+                    Send to {selectedChannels.length} Channel{selectedChannels.length !== 1 ? 's' : ''}
+                  </>
+                )}
+              </button>
+
+              <p className="text-xs text-muted mt-2 text-center">
+                Note: Channels don't support mentions.
+              </p>
+            </div>
+          </div>
+
+          {/* Right: Channel selection */}
+          <div className="space-y-4">
+            <div className="bg-surface rounded-lg p-4">
+              <div
+                className="flex items-center justify-between cursor-pointer"
+                onClick={() => setChannelsExpanded(!channelsExpanded)}
+              >
+                <h3 className="text-lg font-medium text-foreground">Your Channels</h3>
+                {channelsExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+              </div>
+
+              {channelsExpanded && (
+                <>
+                  <div className="flex gap-2 mt-4 mb-2">
+                    <button
+                      onClick={() => setSelectedChannels(channelsData?.channels || [])}
+                      className="text-xs text-primary hover:underline"
+                    >
+                      Select All
+                    </button>
+                    <button
+                      onClick={() => setSelectedChannels([])}
+                      className="text-xs text-muted hover:text-foreground"
+                    >
+                      Deselect All
+                    </button>
+                  </div>
+
+                  {channelsLoading ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 size={24} className="animate-spin text-primary" />
+                    </div>
+                  ) : channelsData?.channels && channelsData.channels.length > 0 ? (
+                    <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                      {channelsData.channels.map((channel) => (
+                        <div
+                          key={channel.id}
+                          onClick={() => toggleChannel(channel)}
+                          className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-colors ${
+                            selectedChannels.some((c) => c.id === channel.id)
+                              ? 'bg-primary/10 border border-primary'
+                              : 'bg-background hover:bg-surface border border-transparent'
+                          }`}
+                        >
+                          {selectedChannels.some((c) => c.id === channel.id) ? (
+                            <CheckSquare size={20} className="text-primary flex-shrink-0" />
+                          ) : (
+                            <Square size={20} className="text-muted flex-shrink-0" />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <p className="font-medium text-foreground truncate">{channel.name}</p>
+                            {channel.description && (
+                              <p className="text-xs text-muted truncate">{channel.description}</p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-muted">
+                      <Users size={48} className="mx-auto mb-2 opacity-50" />
+                      <p>No channels found</p>
+                      <p className="text-xs mt-1">Make sure you follow or own channels on WhatsApp</p>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Channel Progress Modal */}
+      {showChannelProgressModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-surface rounded-lg p-6 max-w-md w-full mx-4">
+            {channelResult ? (
+              <>
+                <div className="text-center">
+                  {channelResult.channels_failed === 0 ? (
+                    <Check size={48} className="mx-auto text-green-400 mb-4" />
+                  ) : channelResult.channels_sent > 0 ? (
+                    <AlertCircle size={48} className="mx-auto text-orange-400 mb-4" />
+                  ) : (
+                    <X size={48} className="mx-auto text-red-400 mb-4" />
+                  )}
+                  <h3 className="text-lg font-medium text-foreground mb-2">
+                    {channelResult.channels_failed === 0
+                      ? 'Broadcast Sent!'
+                      : channelResult.channels_sent > 0
+                      ? 'Partially Sent'
+                      : 'Broadcast Failed'}
+                  </h3>
+                  <p className="text-muted mb-4">
+                    Sent to {channelResult.channels_sent} channel{channelResult.channels_sent !== 1 ? 's' : ''}
+                    {channelResult.channels_failed > 0 &&
+                      `, failed: ${channelResult.channels_failed}`}
+                  </p>
+                  {channelResult.error_message && (
+                    <p className="text-sm text-red-400 mb-4">{channelResult.error_message}</p>
+                  )}
+                  <button
+                    onClick={() => {
+                      setShowChannelProgressModal(false)
+                      setChannelResult(null)
+                      resetChannelForm()
+                      refetchHistory()
+                    }}
+                    className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90"
+                  >
+                    Done
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-center">
+                  <Loader2 size={48} className="mx-auto text-primary animate-spin mb-4" />
+                  <h3 className="text-lg font-medium text-foreground mb-2">Sending to Channels...</h3>
+                  {channelProgress && (
+                    <div className="space-y-2">
+                      <p className="text-muted">
+                        Currently sending to: {channelProgress.channel_name}
+                      </p>
+                      <div className="w-full bg-background rounded-full h-2">
+                        <div
+                          className="bg-primary h-2 rounded-full transition-all"
+                          style={{
+                            width: `${(channelProgress.channels_sent / channelProgress.total_channels) * 100}%`,
+                          }}
+                        />
+                      </div>
+                      <p className="text-sm text-muted">
+                        {channelProgress.channels_sent} / {channelProgress.total_channels} channels
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Scheduled Tab */}
       {activeTab === 'scheduled' && (
         <div className="space-y-4">
@@ -1182,6 +1652,10 @@ export default function BroadcastPage() {
                     {msg.task_type === 'poll' ? (
                       <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs font-medium">
                         Poll
+                      </span>
+                    ) : msg.task_type === 'channel_broadcast' ? (
+                      <span className="px-2 py-0.5 bg-green-500/20 text-green-400 rounded text-xs font-medium">
+                        Channel
                       </span>
                     ) : (
                       <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs font-medium">
@@ -1206,16 +1680,27 @@ export default function BroadcastPage() {
                     </div>
                   )}
                   <div className="flex flex-wrap gap-1">
-                    {msg.group_names.map((name, i) => (
-                      <span
-                        key={i}
-                        className="px-2 py-0.5 bg-surface-secondary text-foreground-secondary rounded text-xs"
-                      >
-                        {name}
-                      </span>
-                    ))}
+                    {msg.task_type === 'channel_broadcast' ? (
+                      msg.channel_names?.map((name, i) => (
+                        <span
+                          key={i}
+                          className="px-2 py-0.5 bg-green-500/10 text-green-400 rounded text-xs"
+                        >
+                          {name}
+                        </span>
+                      ))
+                    ) : (
+                      msg.group_names.map((name, i) => (
+                        <span
+                          key={i}
+                          className="px-2 py-0.5 bg-surface-secondary text-foreground-secondary rounded text-xs"
+                        >
+                          {name}
+                        </span>
+                      ))
+                    )}
                   </div>
-                  {msg.mention_type !== 'none' && (
+                  {msg.task_type !== 'channel_broadcast' && msg.mention_type !== 'none' && (
                     <p className="text-xs text-muted mt-2">
                       Mentions: {msg.mention_type === 'all' ? 'All members' : 'Selected members'}
                     </p>
@@ -1257,6 +1742,10 @@ export default function BroadcastPage() {
                       <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs font-medium">
                         Poll
                       </span>
+                    ) : broadcast.task_type === 'channel_broadcast' ? (
+                      <span className="px-2 py-0.5 bg-green-500/20 text-green-400 rounded text-xs font-medium">
+                        Channel
+                      </span>
                     ) : (
                       <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs font-medium">
                         Broadcast
@@ -1271,7 +1760,7 @@ export default function BroadcastPage() {
                     </span>
                   </div>
                   <div className="text-sm text-muted">
-                    {broadcast.groups_sent}/{broadcast.groups_sent + broadcast.groups_failed} groups
+                    {broadcast.groups_sent}/{broadcast.groups_sent + broadcast.groups_failed} {broadcast.task_type === 'channel_broadcast' ? 'channels' : 'groups'}
                   </div>
                 </div>
                 <p className="text-foreground mb-3">
@@ -1288,14 +1777,25 @@ export default function BroadcastPage() {
                   </div>
                 )}
                 <div className="flex flex-wrap gap-1 mb-2">
-                  {broadcast.group_names.map((name, i) => (
-                    <span
-                      key={i}
-                      className="px-2 py-0.5 bg-surface-secondary text-foreground-secondary rounded text-xs"
-                    >
-                      {name}
-                    </span>
-                  ))}
+                  {broadcast.task_type === 'channel_broadcast' ? (
+                    broadcast.channel_names?.map((name, i) => (
+                      <span
+                        key={i}
+                        className="px-2 py-0.5 bg-green-500/10 text-green-400 rounded text-xs"
+                      >
+                        {name}
+                      </span>
+                    ))
+                  ) : (
+                    broadcast.group_names.map((name, i) => (
+                      <span
+                        key={i}
+                        className="px-2 py-0.5 bg-surface-secondary text-foreground-secondary rounded text-xs"
+                      >
+                        {name}
+                      </span>
+                    ))
+                  )}
                 </div>
                 {broadcast.error_message && (
                   <p className="text-xs text-red-400 mt-2">

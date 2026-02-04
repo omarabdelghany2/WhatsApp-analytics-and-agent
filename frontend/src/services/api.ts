@@ -718,12 +718,70 @@ class ApiClient {
     })
   }
 
+  // Channel Broadcast
+  async getChannels() {
+    return this.request<{
+      success: boolean
+      channels: Array<{ id: string; name: string; description: string }>
+    }>('/api/whatsapp/channels')
+  }
+
+  async sendChannelBroadcast(data: {
+    content: string
+    channel_ids: string[]
+    channel_names: string[]
+    scheduled_at?: string
+  }) {
+    return this.request<{
+      success: boolean
+      message_id: number
+      scheduled: boolean
+      scheduled_at: string | null
+      channels: string[]
+    }>('/api/broadcast/send-channel', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  }
+
+  async sendChannelBroadcastWithMedia(
+    media: File,
+    channelIds: string[],
+    channelNames: string[],
+    content?: string,
+    scheduledAt?: string
+  ) {
+    const formData = new FormData()
+    formData.append('media', media)
+    formData.append('channel_ids', JSON.stringify(channelIds))
+    formData.append('channel_names', JSON.stringify(channelNames))
+    if (content) formData.append('content', content)
+    if (scheduledAt) formData.append('scheduled_at', scheduledAt)
+
+    const token = this.getToken()
+    const response = await fetch(`${API_BASE_URL}/api/broadcast/send-channel-media`, {
+      method: 'POST',
+      headers: {
+        ...(token && { Authorization: `Bearer ${token}` }),
+      },
+      body: formData,
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Request failed' }))
+      throw new Error(error.detail || 'Request failed')
+    }
+
+    return response.json()
+  }
+
   async getScheduledMessages() {
     return this.request<Array<{
       id: number
       task_type: string
       content: string
       group_names: string[]
+      channel_names: string[]
       mention_type: string
       scheduled_at: string
       status: string
@@ -743,6 +801,7 @@ class ApiClient {
         task_type: string
         content: string
         group_names: string[]
+        channel_names: string[]
         mention_type: string
         scheduled_at: string | null
         sent_at: string | null

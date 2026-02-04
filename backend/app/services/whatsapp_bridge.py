@@ -283,6 +283,62 @@ class WhatsAppBridge:
             except httpx.RequestError as e:
                 return {"success": False, "error": str(e)}
 
+    # ==================== CHANNEL METHODS ====================
+
+    async def get_channels(self, user_id: int) -> Dict[str, Any]:
+        """Get all WhatsApp channels for user"""
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(
+                    f"{self.base_url}/api/clients/{user_id}/channels",
+                    timeout=120.0
+                )
+                return response.json()
+            except httpx.ReadTimeout:
+                return {"success": False, "channels": [], "error": "Request timed out - WhatsApp service is busy. Please try again."}
+            except httpx.RequestError as e:
+                return {"success": False, "channels": [], "error": str(e)}
+
+    async def send_channel_message(
+        self,
+        user_id: int,
+        channel_id: str,
+        content: str
+    ) -> Dict[str, Any]:
+        """Send a message to a channel"""
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    f"{self.base_url}/api/clients/{user_id}/channels/{channel_id}/send",
+                    json={"content": content},
+                    timeout=60.0
+                )
+                return response.json()
+            except httpx.RequestError as e:
+                return {"success": False, "error": str(e)}
+
+    async def send_channel_media_from_path(
+        self,
+        user_id: int,
+        channel_id: str,
+        file_path: str,
+        caption: str = ""
+    ) -> Dict[str, Any]:
+        """Send media from a stored path to a channel"""
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    f"{self.base_url}/api/clients/{user_id}/channels/{channel_id}/send-media-from-path",
+                    json={
+                        "filePath": file_path,
+                        "caption": caption
+                    },
+                    timeout=120.0
+                )
+                return response.json()
+            except httpx.RequestError as e:
+                return {"success": False, "error": str(e)}
+
 
 # Singleton instance
 whatsapp_bridge = WhatsAppBridge()

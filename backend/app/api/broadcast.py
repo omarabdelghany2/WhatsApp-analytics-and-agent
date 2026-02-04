@@ -37,6 +37,13 @@ class SendPollRequest(BaseModel):
     scheduled_at: Optional[datetime] = None  # If None, send immediately
 
 
+class SendChannelBroadcastRequest(BaseModel):
+    content: str
+    channel_ids: List[str]  # List of WhatsApp channel IDs (e.g., "123456@newsletter")
+    channel_names: List[str]  # Names for display
+    scheduled_at: Optional[datetime] = None  # If None, send immediately
+
+
 class ScheduledMessageResponse(BaseModel):
     id: int
     content: str
@@ -276,6 +283,114 @@ async def send_immediate_poll(
         })
 
 
+async def send_immediate_channel_broadcast(
+    user_id: int,
+    scheduled_msg: ScheduledMessage,
+    db: Session
+):
+    """Send channel broadcast immediately with 30-second delays between channels"""
+    try:
+        channel_ids = scheduled_msg.channel_ids or []
+        channel_names = scheduled_msg.channel_names or []
+        channels_sent = 0
+        channels_failed = 0
+        errors = []
+        has_media = bool(scheduled_msg.media_path)
+
+        # Mark as sending
+        scheduled_msg.status = 'sending'
+        db.commit()
+
+        for i, channel_id in enumerate(channel_ids):
+            # 30-second delay between channels (except first)
+            if i > 0:
+                await asyncio.sleep(30)
+
+            try:
+                channel_name = channel_names[i] if i < len(channel_names) else channel_id
+
+                # Send the message (with or without media)
+                if has_media:
+                    result = await whatsapp_bridge.send_channel_media_from_path(
+                        user_id=user_id,
+                        channel_id=channel_id,
+                        file_path=scheduled_msg.media_path,
+                        caption=scheduled_msg.content
+                    )
+                else:
+                    result = await whatsapp_bridge.send_channel_message(
+                        user_id=user_id,
+                        channel_id=channel_id,
+                        content=scheduled_msg.content
+                    )
+
+                if result.get('success'):
+                    channels_sent += 1
+
+                    # Notify progress via WebSocket
+                    await websocket_manager.send_to_user(user_id, {
+                        'type': 'channel_broadcast_progress',
+                        'message_id': scheduled_msg.id,
+                        'channel_name': channel_name,
+                        'channels_sent': channels_sent,
+                        'total_channels': len(channel_ids)
+                    })
+                else:
+                    channels_failed += 1
+                    error_msg = result.get('error', 'Unknown error')
+                    errors.append(f"{channel_name}: {error_msg}")
+
+            except Exception as e:
+                channels_failed += 1
+                errors.append(f"Channel {channel_id}: {str(e)}")
+
+        # Update final status
+        scheduled_msg.groups_sent = channels_sent  # Reuse groups_sent for channels
+        scheduled_msg.groups_failed = channels_failed
+        scheduled_msg.sent_at = datetime.utcnow()
+
+        if channels_failed == 0:
+            scheduled_msg.status = 'sent'
+        elif channels_sent == 0:
+            scheduled_msg.status = 'failed'
+        else:
+            scheduled_msg.status = 'partially_sent'
+
+        if errors:
+            scheduled_msg.error_message = "; ".join(errors)
+
+        # Clean up media file on WhatsApp service after broadcast
+        if has_media:
+            try:
+                await whatsapp_bridge.delete_media(scheduled_msg.media_path)
+            except Exception:
+                pass
+
+        db.commit()
+
+        # Notify completion via WebSocket
+        await websocket_manager.send_to_user(user_id, {
+            'type': 'channel_broadcast_complete',
+            'message_id': scheduled_msg.id,
+            'status': scheduled_msg.status,
+            'channels_sent': channels_sent,
+            'channels_failed': channels_failed,
+            'error_message': scheduled_msg.error_message
+        })
+
+    except Exception as e:
+        scheduled_msg.status = 'failed'
+        scheduled_msg.error_message = str(e)
+        db.commit()
+
+        await websocket_manager.send_to_user(user_id, {
+            'type': 'channel_broadcast_complete',
+            'message_id': scheduled_msg.id,
+            'status': 'failed',
+            'error_message': str(e)
+        })
+
+
 @router.post("/send")
 async def send_broadcast(
     request: SendBroadcastRequest,
@@ -496,6 +611,7 @@ def get_scheduled_messages(
         or_(
             ScheduledMessage.task_type == 'broadcast',
             ScheduledMessage.task_type == 'poll',
+            ScheduledMessage.task_type == 'channel_broadcast',
             ScheduledMessage.task_type.is_(None)
         )
     ).order_by(ScheduledMessage.scheduled_at).all()
@@ -506,6 +622,7 @@ def get_scheduled_messages(
             "task_type": msg.task_type or 'broadcast',
             "content": (msg.content[:100] + "..." if len(msg.content) > 100 else msg.content) if msg.content else "",
             "group_names": msg.group_names or [],
+            "channel_names": msg.channel_names or [],
             "mention_type": msg.mention_type,
             "scheduled_at": msg.scheduled_at.isoformat() if msg.scheduled_at else None,
             "status": msg.status,
@@ -531,6 +648,7 @@ def get_broadcast_history(
         or_(
             ScheduledMessage.task_type == 'broadcast',
             ScheduledMessage.task_type == 'poll',
+            ScheduledMessage.task_type == 'channel_broadcast',
             ScheduledMessage.task_type.is_(None)
         )
     )
@@ -549,6 +667,7 @@ def get_broadcast_history(
                 "task_type": msg.task_type or 'broadcast',
                 "content": (msg.content[:100] + "..." if len(msg.content) > 100 else msg.content) if msg.content else "",
                 "group_names": msg.group_names or [],
+                "channel_names": msg.channel_names or [],
                 "mention_type": msg.mention_type,
                 "scheduled_at": msg.scheduled_at.isoformat() if msg.scheduled_at else None,
                 "sent_at": msg.sent_at.isoformat() if msg.sent_at else None,
@@ -677,6 +796,171 @@ async def send_poll_broadcast(
         "scheduled": request.scheduled_at is not None,
         "scheduled_at": scheduled_at.isoformat() if request.scheduled_at else None,
         "groups": group_names
+    }
+
+
+# ==================== CHANNEL BROADCAST ENDPOINTS ====================
+
+@router.post("/send-channel")
+async def send_channel_broadcast(
+    request: SendChannelBroadcastRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Send a broadcast message to multiple channels (immediate or scheduled)"""
+
+    if not request.content:
+        raise HTTPException(status_code=400, detail="Message content is required")
+
+    if not request.channel_ids:
+        raise HTTPException(status_code=400, detail="At least one channel is required")
+
+    if len(request.channel_ids) != len(request.channel_names):
+        raise HTTPException(status_code=400, detail="channel_ids and channel_names must have the same length")
+
+    # Determine scheduled time
+    if request.scheduled_at:
+        scheduled_at = request.scheduled_at.replace(tzinfo=None) if request.scheduled_at.tzinfo else request.scheduled_at
+        if scheduled_at <= datetime.utcnow():
+            raise HTTPException(status_code=400, detail="Scheduled time must be in the future")
+        status = 'pending'
+    else:
+        scheduled_at = datetime.utcnow()
+        status = 'sending'
+
+    # Create scheduled message record
+    scheduled_msg = ScheduledMessage(
+        user_id=current_user.id,
+        task_type='channel_broadcast',
+        content=request.content,
+        channel_ids=request.channel_ids,
+        channel_names=request.channel_names,
+        scheduled_at=scheduled_at,
+        status=status
+    )
+    db.add(scheduled_msg)
+    db.commit()
+    db.refresh(scheduled_msg)
+
+    # If immediate send, execute in background
+    if not request.scheduled_at:
+        background_tasks.add_task(
+            send_immediate_channel_broadcast,
+            current_user.id,
+            scheduled_msg,
+            db
+        )
+
+    return {
+        "success": True,
+        "message_id": scheduled_msg.id,
+        "scheduled": request.scheduled_at is not None,
+        "scheduled_at": scheduled_at.isoformat() if request.scheduled_at else None,
+        "channels": request.channel_names
+    }
+
+
+@router.post("/send-channel-media")
+async def send_channel_broadcast_with_media(
+    background_tasks: BackgroundTasks,
+    media: UploadFile = File(...),
+    content: str = Form(default=""),
+    channel_ids: str = Form(...),
+    channel_names: str = Form(...),
+    scheduled_at: Optional[str] = Form(default=None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Send a broadcast message with media to multiple channels (immediate or scheduled)"""
+    import json
+    import tempfile
+    import shutil
+
+    # Parse channel_ids from JSON string
+    try:
+        parsed_channel_ids = json.loads(channel_ids)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid channel_ids format")
+
+    # Parse channel_names from JSON string
+    try:
+        parsed_channel_names = json.loads(channel_names)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid channel_names format")
+
+    if not parsed_channel_ids:
+        raise HTTPException(status_code=400, detail="At least one channel is required")
+
+    if len(parsed_channel_ids) != len(parsed_channel_names):
+        raise HTTPException(status_code=400, detail="channel_ids and channel_names must have the same length")
+
+    # Save uploaded file temporarily
+    file_extension = os.path.splitext(media.filename)[1] if media.filename else ""
+    with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
+        shutil.copyfileobj(media.file, temp_file)
+        temp_filepath = temp_file.name
+
+    # Upload media to WhatsApp service's persistent volume
+    try:
+        upload_result = await whatsapp_bridge.upload_media(temp_filepath)
+        if not upload_result.get('success'):
+            os.remove(temp_filepath)
+            raise HTTPException(status_code=500, detail=f"Failed to upload media: {upload_result.get('error')}")
+
+        remote_media_path = upload_result.get('filePath')
+        print(f"[CHANNEL_BROADCAST] Media uploaded to WhatsApp service: {remote_media_path}", flush=True)
+    finally:
+        if os.path.exists(temp_filepath):
+            os.remove(temp_filepath)
+
+    # Determine scheduled time
+    parsed_scheduled_at = None
+    if scheduled_at:
+        try:
+            parsed_scheduled_at = datetime.fromisoformat(scheduled_at.replace('Z', '+00:00'))
+            parsed_scheduled_at = parsed_scheduled_at.replace(tzinfo=None)
+            if parsed_scheduled_at <= datetime.utcnow():
+                await whatsapp_bridge.delete_media(remote_media_path)
+                raise HTTPException(status_code=400, detail="Scheduled time must be in the future")
+        except ValueError:
+            await whatsapp_bridge.delete_media(remote_media_path)
+            raise HTTPException(status_code=400, detail="Invalid scheduled_at format")
+
+    final_scheduled_at = parsed_scheduled_at if parsed_scheduled_at else datetime.utcnow()
+    status_val = 'pending' if parsed_scheduled_at else 'sending'
+
+    # Create scheduled message record
+    scheduled_msg = ScheduledMessage(
+        user_id=current_user.id,
+        task_type='channel_broadcast',
+        content=content or "",
+        media_path=remote_media_path,
+        channel_ids=parsed_channel_ids,
+        channel_names=parsed_channel_names,
+        scheduled_at=final_scheduled_at,
+        status=status_val
+    )
+    db.add(scheduled_msg)
+    db.commit()
+    db.refresh(scheduled_msg)
+
+    # If immediate send, execute in background
+    if not parsed_scheduled_at:
+        background_tasks.add_task(
+            send_immediate_channel_broadcast,
+            current_user.id,
+            scheduled_msg,
+            db
+        )
+
+    return {
+        "success": True,
+        "message_id": scheduled_msg.id,
+        "scheduled": parsed_scheduled_at is not None,
+        "scheduled_at": final_scheduled_at.isoformat() if parsed_scheduled_at else None,
+        "channels": parsed_channel_names,
+        "has_media": True
     }
 
 

@@ -235,6 +235,89 @@ module.exports = (clientManager) => {
         }
     });
 
+    // ==================== CHANNEL ROUTES ====================
+
+    // Get available channels
+    router.get('/:userId/channels', async (req, res) => {
+        try {
+            const userId = parseInt(req.params.userId);
+            const channels = await clientManager.getChannels(userId);
+            res.json({ success: true, channels });
+        } catch (error) {
+            console.error('Error getting channels:', error);
+            res.status(500).json({ success: false, error: error.message, channels: [] });
+        }
+    });
+
+    // Send message to a channel
+    router.post('/:userId/channels/:channelId/send', async (req, res) => {
+        try {
+            const userId = parseInt(req.params.userId);
+            const channelId = req.params.channelId;
+            const { content } = req.body;
+
+            if (!content) {
+                return res.status(400).json({ success: false, error: 'Message content is required' });
+            }
+
+            const result = await clientManager.sendChannelMessage(userId, channelId, content);
+            res.json(result);
+        } catch (error) {
+            console.error('Error sending channel message:', error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // Send media message to a channel
+    router.post('/:userId/channels/:channelId/send-media', upload.single('media'), async (req, res) => {
+        try {
+            const userId = parseInt(req.params.userId);
+            const channelId = req.params.channelId;
+            const { caption } = req.body;
+
+            if (!req.file) {
+                return res.status(400).json({ success: false, error: 'Media file is required' });
+            }
+
+            const result = await clientManager.sendChannelMediaMessage(userId, channelId, req.file.path, caption || '');
+            res.json(result);
+        } catch (error) {
+            console.error('Error sending channel media:', error);
+            // Clean up uploaded file on error
+            if (req.file && fs.existsSync(req.file.path)) {
+                try {
+                    fs.unlinkSync(req.file.path);
+                } catch (e) {
+                    // Ignore cleanup errors
+                }
+            }
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // Send media from stored path to a channel (for scheduled broadcasts)
+    router.post('/:userId/channels/:channelId/send-media-from-path', async (req, res) => {
+        try {
+            const userId = parseInt(req.params.userId);
+            const channelId = req.params.channelId;
+            const { filePath, caption } = req.body;
+
+            if (!filePath) {
+                return res.status(400).json({ success: false, error: 'filePath is required' });
+            }
+
+            if (!fs.existsSync(filePath)) {
+                return res.status(404).json({ success: false, error: 'Media file not found' });
+            }
+
+            const result = await clientManager.sendChannelMediaMessage(userId, channelId, filePath, caption || '');
+            res.json(result);
+        } catch (error) {
+            console.error('Error sending channel media from path:', error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
     // Logout/destroy client
     router.post('/:userId/logout', async (req, res) => {
         try {

@@ -159,3 +159,22 @@ async def get_group_members(
         "success": True,
         "members": result.get("members", [])
     }
+
+
+@router.get("/channels")
+async def get_channels(
+    current_user: User = Depends(get_current_user)
+):
+    """Get all WhatsApp channels the user follows or owns"""
+    result = await whatsapp_bridge.get_channels(current_user.id)
+
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=400,
+            detail=result.get("error", "Failed to get channels")
+        )
+
+    return {
+        "success": True,
+        "channels": result.get("channels", [])
+    }

@@ -27,8 +27,13 @@ class ScheduledMessage(Base):
     poll_options = Column(JSON)  # List of poll option strings
     poll_allow_multiple = Column(Boolean, default=False)  # Allow multiple answers
 
-    group_ids = Column(JSON, nullable=False)  # List of WhatsApp group IDs to send to
+    group_ids = Column(JSON)  # List of WhatsApp group IDs to send to (nullable for channel broadcasts)
     group_names = Column(JSON)  # List of group names for display
+
+    # Channel-specific fields (for task_type='channel_broadcast')
+    channel_ids = Column(JSON)  # List of WhatsApp channel IDs (e.g., "123456@newsletter")
+    channel_names = Column(JSON)  # List of channel names for display
+
     mention_type = Column(String(20), default='none')  # 'none', 'all', 'selected'
     mention_ids = Column(JSON)  # List of phone numbers to mention (for 'selected')
     scheduled_at = Column(DateTime, nullable=False)  # When to send
