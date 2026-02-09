@@ -13,6 +13,7 @@ import {
   ArrowLeft,
 } from 'lucide-react'
 import HeaderBar from './HeaderBar'
+import SnowfallBackground from '../ui/SnowfallBackground'
 
 export default function AdminLayout() {
   const { user, logout } = useAuth()
@@ -35,6 +36,7 @@ export default function AdminLayout() {
 
   return (
     <div className="min-h-screen bg-background flex">
+      <SnowfallBackground />
       {/* Sidebar */}
       <aside className="w-64 bg-surface border-r border-border">
         <div className="p-4 border-b border-border">
