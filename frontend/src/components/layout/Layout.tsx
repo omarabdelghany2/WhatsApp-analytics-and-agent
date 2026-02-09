@@ -19,7 +19,6 @@ import {
   Bot,
 } from 'lucide-react'
 import HeaderBar from './HeaderBar'
-import SnowfallBackground from '../ui/SnowfallBackground'
 
 export default function Layout() {
   const { t } = useTranslation()
@@ -46,7 +45,6 @@ export default function Layout() {
 
   return (
     <div className="min-h-screen bg-background flex">
-      <SnowfallBackground />
       {/* Sidebar */}
       <aside className="w-64 bg-surface border-r border-border">
         <div className="p-4 border-b border-border">
