@@ -108,6 +108,8 @@ class WhatsAppBridge:
                     timeout=60.0  # Longer timeout for sending
                 )
                 return response.json()
+            except httpx.ReadTimeout:
+                return {"success": False, "error": "Request timed out - WhatsApp service is busy"}
             except httpx.RequestError as e:
                 return {"success": False, "error": str(e)}
 
@@ -212,6 +214,8 @@ class WhatsAppBridge:
                     timeout=60.0
                 )
                 return response.json()
+            except httpx.ReadTimeout:
+                return {"success": False, "error": "Request timed out - WhatsApp service is busy"}
             except httpx.RequestError as e:
                 return {"success": False, "error": str(e)}
 
@@ -254,6 +258,8 @@ class WhatsAppBridge:
                     timeout=120.0
                 )
                 return response.json()
+            except httpx.ReadTimeout:
+                return {"success": False, "error": "Request timed out - WhatsApp service is busy"}
             except httpx.RequestError as e:
                 return {"success": False, "error": str(e)}
 

@@ -824,12 +824,9 @@ class ClientManager {
 
                 const result = await client.sendMessage(groupId, media, sendOptions);
 
-                // Clean up uploaded file after sending
-                try {
-                    fs.unlinkSync(mediaPath);
-                } catch (e) {
-                    console.log(`[WARN] Could not delete temp file: ${e.message}`);
-                }
+                // NOTE: Don't delete file here - for scheduled broadcasts, the same file
+                // is sent to multiple groups. The scheduler handles cleanup after all groups.
+                // See message_scheduler.py:170 which calls whatsapp_bridge.delete_media()
 
                 return {
                     success: true,

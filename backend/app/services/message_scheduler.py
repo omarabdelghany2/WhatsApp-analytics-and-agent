@@ -1,7 +1,7 @@
 import asyncio
 import os
 from datetime import datetime, timedelta, time
-from typing import Optional
+from typing import Optional, Dict, Callable, Any
 
 from sqlalchemy.orm import Session
 
@@ -36,6 +36,82 @@ class MessageScheduler:
         """Stop the scheduler"""
         self.running = False
         print("[SCHEDULER] Scheduler stopped", flush=True)
+
+    async def _check_client_health(self, user_id: int) -> bool:
+        """Check if WhatsApp client is ready before sending"""
+        try:
+            status = await whatsapp_bridge.get_status(user_id)
+            return status.get('status') == 'ready'
+        except Exception as e:
+            print(f"[SCHEDULER] Health check failed for user {user_id}: {e}", flush=True)
+            return False
+
+    async def _send_with_retry(self, send_func: Callable, max_retries: int = 3) -> Dict[str, Any]:
+        """Execute send function with exponential backoff retry for timeout errors"""
+        delays = [5, 10, 20]  # seconds between retries
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                result = await send_func()
+
+                if result.get('success'):
+                    return result
+
+                error = result.get('error', '')
+                last_error = error
+
+                # Check if it's a timeout error worth retrying
+                if 'timed out' in error.lower() or 'timeout' in error.lower():
+                    if attempt < max_retries - 1:
+                        delay = delays[attempt]
+                        print(f"[SCHEDULER] Timeout error, retry {attempt + 1}/{max_retries} in {delay}s...", flush=True)
+                        await asyncio.sleep(delay)
+                        continue
+
+                # Non-timeout errors - don't retry
+                return result
+
+            except Exception as e:
+                last_error = str(e)
+                if attempt < max_retries - 1:
+                    delay = delays[attempt]
+                    print(f"[SCHEDULER] Exception, retry {attempt + 1}/{max_retries} in {delay}s: {e}", flush=True)
+                    await asyncio.sleep(delay)
+                else:
+                    break
+
+        return {"success": False, "error": last_error or "Max retries exceeded"}
+
+    async def _ensure_client_ready(self, user_id: int) -> bool:
+        """Ensure client is ready, attempt recovery if not"""
+        if await self._check_client_health(user_id):
+            return True
+
+        print(f"[SCHEDULER] Client not ready for user {user_id}, attempting recovery...", flush=True)
+
+        # Try to reinitialize the client
+        try:
+            recovery = await whatsapp_bridge.init_client(user_id)
+            if not recovery.get('success'):
+                print(f"[SCHEDULER] Client recovery failed for user {user_id}: {recovery.get('error')}", flush=True)
+                return False
+
+            # Wait for client to stabilize
+            print(f"[SCHEDULER] Recovery initiated, waiting 15s for client to stabilize...", flush=True)
+            await asyncio.sleep(15)
+
+            # Check again
+            if await self._check_client_health(user_id):
+                print(f"[SCHEDULER] Client recovered successfully for user {user_id}", flush=True)
+                return True
+            else:
+                print(f"[SCHEDULER] Client still not ready after recovery for user {user_id}", flush=True)
+                return False
+
+        except Exception as e:
+            print(f"[SCHEDULER] Recovery exception for user {user_id}: {e}", flush=True)
+            return False
 
     async def process_due_tasks(self):
         """Process all tasks that are due"""
@@ -93,6 +169,13 @@ class MessageScheduler:
                     await asyncio.sleep(30)
 
                 try:
+                    # Health check before each send - ensure client is ready
+                    if not await self._ensure_client_ready(scheduled_msg.user_id):
+                        errors.append("WhatsApp client not ready - recovery failed")
+                        groups_failed += len(group_ids) - i  # Fail remaining groups
+                        print(f"[SCHEDULER] Aborting broadcast - client not ready", flush=True)
+                        break  # Exit loop - can't send without client
+
                     # Get the WhatsApp group ID from the monitored group
                     group = db.query(MonitoredGroup).filter(
                         MonitoredGroup.id == group_id,
@@ -106,24 +189,28 @@ class MessageScheduler:
 
                     print(f"[SCHEDULER] Sending to group: {group.group_name}", flush=True)
 
-                    # Send the message (with or without media)
+                    # Send the message with retry logic for timeout errors
                     if has_media:
                         # Media is on WhatsApp service's volume, use send_media_from_path
-                        result = await whatsapp_bridge.send_media_from_path(
-                            user_id=scheduled_msg.user_id,
-                            group_id=group.whatsapp_group_id,
-                            file_path=scheduled_msg.media_path,
-                            caption=scheduled_msg.content,
-                            mention_all=(scheduled_msg.mention_type == 'all'),
-                            mention_ids=scheduled_msg.mention_ids if scheduled_msg.mention_type == 'selected' else None
+                        result = await self._send_with_retry(
+                            lambda g=group: whatsapp_bridge.send_media_from_path(
+                                user_id=scheduled_msg.user_id,
+                                group_id=g.whatsapp_group_id,
+                                file_path=scheduled_msg.media_path,
+                                caption=scheduled_msg.content,
+                                mention_all=(scheduled_msg.mention_type == 'all'),
+                                mention_ids=scheduled_msg.mention_ids if scheduled_msg.mention_type == 'selected' else None
+                            )
                         )
                     else:
-                        result = await whatsapp_bridge.send_message(
-                            user_id=scheduled_msg.user_id,
-                            group_id=group.whatsapp_group_id,
-                            content=scheduled_msg.content,
-                            mention_all=(scheduled_msg.mention_type == 'all'),
-                            mention_ids=scheduled_msg.mention_ids if scheduled_msg.mention_type == 'selected' else None
+                        result = await self._send_with_retry(
+                            lambda g=group: whatsapp_bridge.send_message(
+                                user_id=scheduled_msg.user_id,
+                                group_id=g.whatsapp_group_id,
+                                content=scheduled_msg.content,
+                                mention_all=(scheduled_msg.mention_type == 'all'),
+                                mention_ids=scheduled_msg.mention_ids if scheduled_msg.mention_type == 'selected' else None
+                            )
                         )
 
                     if result.get('success'):
@@ -220,6 +307,13 @@ class MessageScheduler:
                     await asyncio.sleep(30)
 
                 try:
+                    # Health check before each send - ensure client is ready
+                    if not await self._ensure_client_ready(scheduled_msg.user_id):
+                        errors.append("WhatsApp client not ready - recovery failed")
+                        groups_failed += len(group_ids) - i  # Fail remaining groups
+                        print(f"[SCHEDULER] Aborting poll - client not ready", flush=True)
+                        break  # Exit loop - can't send without client
+
                     # Get the WhatsApp group ID from the monitored group
                     group = db.query(MonitoredGroup).filter(
                         MonitoredGroup.id == group_id,
@@ -233,15 +327,17 @@ class MessageScheduler:
 
                     print(f"[SCHEDULER] Sending poll to group: {group.group_name}", flush=True)
 
-                    # Send the poll with mention support
-                    result = await whatsapp_bridge.send_poll(
-                        user_id=scheduled_msg.user_id,
-                        group_id=group.whatsapp_group_id,
-                        question=scheduled_msg.content,  # Poll question stored in content
-                        options=scheduled_msg.poll_options or [],
-                        allow_multiple_answers=scheduled_msg.poll_allow_multiple or False,
-                        mention_all=(scheduled_msg.mention_type == 'all'),
-                        mention_ids=scheduled_msg.mention_ids if scheduled_msg.mention_type == 'selected' else None
+                    # Send the poll with retry logic for timeout errors
+                    result = await self._send_with_retry(
+                        lambda g=group: whatsapp_bridge.send_poll(
+                            user_id=scheduled_msg.user_id,
+                            group_id=g.whatsapp_group_id,
+                            question=scheduled_msg.content,  # Poll question stored in content
+                            options=scheduled_msg.poll_options or [],
+                            allow_multiple_answers=scheduled_msg.poll_allow_multiple or False,
+                            mention_all=(scheduled_msg.mention_type == 'all'),
+                            mention_ids=scheduled_msg.mention_ids if scheduled_msg.mention_type == 'selected' else None
+                        )
                     )
 
                     if result.get('success'):
@@ -331,6 +427,13 @@ class MessageScheduler:
                     await asyncio.sleep(30)
 
                 try:
+                    # Health check before each send - ensure client is ready
+                    if not await self._ensure_client_ready(task.user_id):
+                        errors.append("WhatsApp client not ready - recovery failed")
+                        groups_failed += len(group_ids) - i  # Fail remaining groups
+                        print(f"[SCHEDULER] Aborting group settings - client not ready", flush=True)
+                        break  # Exit loop - can't send without client
+
                     # Get the WhatsApp group ID from the monitored group
                     group = db.query(MonitoredGroup).filter(
                         MonitoredGroup.id == group_id,
@@ -344,25 +447,29 @@ class MessageScheduler:
 
                     print(f"[SCHEDULER] Setting {action} for group: {group.group_name}", flush=True)
 
-                    # Change group settings
-                    result = await whatsapp_bridge.set_group_admin_only(
-                        user_id=task.user_id,
-                        group_id=group.whatsapp_group_id,
-                        admin_only=admin_only
+                    # Change group settings with retry logic
+                    result = await self._send_with_retry(
+                        lambda g=group: whatsapp_bridge.set_group_admin_only(
+                            user_id=task.user_id,
+                            group_id=g.whatsapp_group_id,
+                            admin_only=admin_only
+                        )
                     )
 
                     if result.get('success'):
                         groups_success += 1
                         print(f"[SCHEDULER] Successfully set {action} for {group.group_name}", flush=True)
 
-                        # Send optional message if configured
+                        # Send optional message if configured (also with retry)
                         if task.content:
-                            await whatsapp_bridge.send_message(
-                                user_id=task.user_id,
-                                group_id=group.whatsapp_group_id,
-                                content=task.content,
-                                mention_all=(task.mention_type == 'all'),
-                                mention_ids=task.mention_ids if task.mention_type == 'selected' else None
+                            await self._send_with_retry(
+                                lambda g=group: whatsapp_bridge.send_message(
+                                    user_id=task.user_id,
+                                    group_id=g.whatsapp_group_id,
+                                    content=task.content,
+                                    mention_all=(task.mention_type == 'all'),
+                                    mention_ids=task.mention_ids if task.mention_type == 'selected' else None
+                                )
                             )
 
                         # Notify user of progress via WebSocket
