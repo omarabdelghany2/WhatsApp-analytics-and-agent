@@ -272,19 +272,15 @@ export default function BroadcastPage() {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
-      if (file.type.startsWith('video/')) {
-        alert('Video files are not supported in broadcasts')
+      if (!file.type.startsWith('image/')) {
+        alert('Only image files are supported in broadcasts')
         if (fileInputRef.current) fileInputRef.current.value = ''
         return
       }
       setSelectedMedia(file)
-      if (file.type.startsWith('image/')) {
-        const reader = new FileReader()
-        reader.onload = (e) => setMediaPreview(e.target?.result as string)
-        reader.readAsDataURL(file)
-      } else {
-        setMediaPreview(null)
-      }
+      const reader = new FileReader()
+      reader.onload = (e) => setMediaPreview(e.target?.result as string)
+      reader.readAsDataURL(file)
     }
   }
 
@@ -301,8 +297,7 @@ export default function BroadcastPage() {
   const getMediaIcon = () => {
     if (!selectedMedia) return null
     if (selectedMedia.type.startsWith('image/')) return <Image size={24} className="text-blue-400" />
-    if (selectedMedia.type.startsWith('video/')) return <Film size={24} className="text-purple-400" />
-    return <FileText size={24} className="text-orange-400" />
+    return <Image size={24} className="text-blue-400" />
   }
 
   // Cancel scheduled message mutation
@@ -751,19 +746,15 @@ export default function BroadcastPage() {
   const handleChannelFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
-      if (file.type.startsWith('video/')) {
-        alert('Video files are not supported in broadcasts')
+      if (!file.type.startsWith('image/')) {
+        alert('Only image files are supported in broadcasts')
         if (channelFileInputRef.current) channelFileInputRef.current.value = ''
         return
       }
       setChannelSelectedMedia(file)
-      if (file.type.startsWith('image/')) {
-        const reader = new FileReader()
-        reader.onload = (e) => setChannelMediaPreview(e.target?.result as string)
-        reader.readAsDataURL(file)
-      } else {
-        setChannelMediaPreview(null)
-      }
+      const reader = new FileReader()
+      reader.onload = (e) => setChannelMediaPreview(e.target?.result as string)
+      reader.readAsDataURL(file)
     }
   }
 
@@ -922,7 +913,7 @@ export default function BroadcastPage() {
             {/* Media Upload */}
             <div className="bg-surface rounded-lg p-4">
               <label className="block text-sm font-medium text-foreground-secondary mb-3">
-                Attach Media (Optional)
+                Attach Image (Optional)
               </label>
 
               {/* Hidden File Input */}
@@ -930,7 +921,7 @@ export default function BroadcastPage() {
                 ref={fileInputRef}
                 type="file"
                 onChange={handleFileSelect}
-                accept="image/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar"
+                accept="image/*"
                 className="hidden"
               />
 
@@ -965,10 +956,10 @@ export default function BroadcastPage() {
                   onClick={() => fileInputRef.current?.click()}
                   className="w-full p-6 border-2 border-dashed border-border rounded-lg hover:border-muted transition-colors text-center"
                 >
-                  <Paperclip size={32} className="mx-auto mb-2 text-muted" />
-                  <p className="text-foreground-secondary font-medium">Click to attach a file</p>
+                  <Image size={32} className="mx-auto mb-2 text-muted" />
+                  <p className="text-foreground-secondary font-medium">Click to attach an image</p>
                   <p className="text-xs text-muted mt-1">
-                    Images, videos, documents up to 64MB
+                    Images only (JPEG, PNG, GIF, WebP)
                   </p>
                 </button>
               )}
@@ -1520,13 +1511,13 @@ export default function BroadcastPage() {
                   {/* Media upload */}
                   <div className="mb-4">
                     <label className="block text-sm font-medium text-foreground mb-2">
-                      Attach Media (optional)
+                      Attach Image (optional)
                     </label>
                     <div className="flex items-center gap-4">
                       <input
                         ref={channelFileInputRef}
                         type="file"
-                        accept="image/*,audio/*,application/*"
+                        accept="image/*"
                         onChange={handleChannelFileSelect}
                         className="hidden"
                       />
@@ -1534,18 +1525,12 @@ export default function BroadcastPage() {
                         onClick={() => channelFileInputRef.current?.click()}
                         className="flex items-center gap-2 px-4 py-2 bg-background border border-border rounded-lg hover:bg-surface transition-colors"
                       >
-                        <Paperclip size={18} />
-                        {channelSelectedMedia ? 'Change File' : 'Attach File'}
+                        <Image size={18} />
+                        {channelSelectedMedia ? 'Change Image' : 'Attach Image'}
                       </button>
                       {channelSelectedMedia && (
                         <div className="flex items-center gap-2 px-3 py-2 bg-background rounded-lg">
-                          {channelSelectedMedia.type.startsWith('image/') ? (
-                            <Image size={18} className="text-blue-400" />
-                          ) : channelSelectedMedia.type.startsWith('video/') ? (
-                            <Film size={18} className="text-purple-400" />
-                          ) : (
-                            <FileText size={18} className="text-orange-400" />
-                          )}
+                          <Image size={18} className="text-blue-400" />
                           <span className="text-sm text-foreground truncate max-w-[200px]">
                             {channelSelectedMedia.name}
                           </span>
