@@ -229,7 +229,6 @@ class ClientManager {
                     '--metrics-recording-only',
                     '--mute-audio',
                     '--safebrowsing-disable-auto-update',
-                    '--js-flags=--max-old-space-size=256',
                     '--disable-software-rasterizer',
                     '--disable-component-update',
                     '--disable-default-apps',
