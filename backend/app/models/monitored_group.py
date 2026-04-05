@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, JSON
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, JSON, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -30,8 +30,10 @@ class MonitoredGroup(Base):
     welcome_part2_text = Column(Text)
     welcome_part2_image = Column(String(500))  # Path to uploaded image
 
-    # Unique constraint: user can only monitor each group once
+    # Indexes and constraints
     __table_args__ = (
+        Index('idx_monitored_group_user_active', 'user_id', 'is_active'),
+        Index('idx_monitored_group_user_whatsapp_id', 'user_id', 'whatsapp_group_id'),
         {"sqlite_autoincrement": True},
     )
 

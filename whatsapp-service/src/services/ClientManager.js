@@ -11,7 +11,15 @@ class ClientManager {
         this.qrTimeouts = new Map();    // userId -> timeoutId (for QR cleanup)
         this.operationQueues = new Map(); // userId -> Promise (for serializing operations)
         this.groupsCache = new Map();   // userId -> { groups: [], timestamp: Date }
-        this.GROUPS_CACHE_TTL = 60000;  // Cache groups for 60 seconds
+        this.membersCache = new Map();  // groupId -> { members: [], timestamp: Date }
+        this.chatNameCache = new Map();  // chatId -> { name, timestamp }
+        this.CHAT_NAME_CACHE_TTL = 30 * 60 * 1000; // Cache chat names for 30 minutes
+        this.GROUPS_CACHE_TTL = 300000;  // Cache groups for 5 minutes
+        this.MEMBERS_CACHE_TTL = 300000; // Cache members for 5 minutes
+        this.monitoredGroups = new Map(); // userId -> Set<whatsappGroupId>
+        this.clientStartTimes = new Map(); // userId -> Date (for periodic restart)
+        this.RESTART_INTERVAL_MS = 6 * 60 * 60 * 1000; // Restart browsers every 6 hours
+        this.isRestarting = false; // Only restart one client at a time
         this.MAX_CONCURRENT_CLIENTS = parseInt(process.env.MAX_CONCURRENT_CLIENTS) || 3; // Limit concurrent browsers
         this.redisPublisher = redisPublisher;
         this.dataDir = dataDir;
@@ -20,6 +28,97 @@ class ClientManager {
         if (!fs.existsSync(dataDir)) {
             fs.mkdirSync(dataDir, { recursive: true });
         }
+
+        // Start periodic restart scheduler
+        this._startRestartScheduler();
+    }
+
+    /**
+     * Set the list of monitored group IDs for a user.
+     * Only events from these groups will be processed.
+     */
+    setMonitoredGroups(userId, groupIds) {
+        this.monitoredGroups.set(userId, new Set(groupIds));
+        console.log(`[MONITOR] User ${userId}: monitoring ${groupIds.length} groups`);
+    }
+
+    /**
+     * Check if a group is monitored by a user.
+     * If no monitored groups are set, process all (fallback for safety).
+     */
+    _isGroupMonitored(userId, groupId) {
+        const monitored = this.monitoredGroups.get(userId);
+        if (!monitored) return true; // No filter set — process all (safety fallback)
+        return monitored.has(groupId);
+    }
+
+    /**
+     * Periodically restart browsers to flush WhatsApp Web memory leaks.
+     * Checks every 30 minutes, restarts clients older than RESTART_INTERVAL_MS.
+     * Only restarts one client at a time. LocalAuth preserves sessions (no QR re-scan).
+     */
+    _startRestartScheduler() {
+        setInterval(async () => {
+            if (this.isRestarting) return;
+
+            const now = Date.now();
+            for (const [userId, startTime] of this.clientStartTimes.entries()) {
+                const uptime = now - startTime;
+                if (uptime < this.RESTART_INTERVAL_MS) continue;
+
+                // Only restart if client is ready and idle (no queued operations)
+                const status = this.clientStatus.get(userId);
+                if (status !== 'ready') continue;
+                if (this.operationQueues.has(userId)) continue;
+
+                this.isRestarting = true;
+                console.log(`[RESTART] Restarting browser for user ${userId} (uptime: ${Math.round(uptime / 3600000)}h)`);
+
+                // Notify backend
+                this.redisPublisher.publish('whatsapp:events', {
+                    type: 'restarting',
+                    userId
+                });
+
+                try {
+                    await this.destroyClient(userId);
+
+                    // Wait a moment for cleanup
+                    await new Promise(resolve => setTimeout(resolve, 5000));
+
+                    // Reinitialize — LocalAuth will restore the session
+                    const result = await this.initializeClient(userId);
+                    if (result.success) {
+                        console.log(`[RESTART] Browser restarted for user ${userId}, waiting for ready...`);
+
+                        // Wait for client to be ready (max 90 seconds)
+                        const readyTimeout = 90000;
+                        const startWait = Date.now();
+                        while (Date.now() - startWait < readyTimeout) {
+                            const newStatus = this.clientStatus.get(userId);
+                            if (newStatus === 'ready') {
+                                console.log(`[RESTART] User ${userId} is ready after restart`);
+                                break;
+                            }
+                            if (newStatus === 'failed' || newStatus === 'disconnected') {
+                                console.log(`[RESTART] User ${userId} failed after restart: ${newStatus}`);
+                                break;
+                            }
+                            await new Promise(resolve => setTimeout(resolve, 5000));
+                        }
+                    } else {
+                        console.log(`[RESTART] Failed to reinitialize user ${userId}: ${result.message}`);
+                    }
+                } catch (error) {
+                    console.error(`[RESTART] Error restarting user ${userId}:`, error.message);
+                } finally {
+                    this.isRestarting = false;
+                }
+
+                // Only restart one client per cycle
+                break;
+            }
+        }, 30 * 60 * 1000); // Check every 30 minutes
     }
 
     /**
@@ -129,7 +228,16 @@ class ClientManager {
                     '--disable-translate',
                     '--metrics-recording-only',
                     '--mute-audio',
-                    '--safebrowsing-disable-auto-update'
+                    '--safebrowsing-disable-auto-update',
+                    '--single-process',
+                    '--js-flags=--max-old-space-size=128',
+                    '--disable-software-rasterizer',
+                    '--disable-component-update',
+                    '--disable-default-apps',
+                    '--disable-domain-reliability',
+                    '--disable-features=TranslateUI,BlinkGenPropertyTrees',
+                    '--disable-renderer-backgrounding',
+                    '--disable-backgrounding-occluded-windows'
                 ],
                 executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
             }
@@ -251,6 +359,7 @@ class ClientManager {
             console.log(`Client ready for user ${userId}`);
             console.log(`[READY] Client is now ready to receive messages`);
             this.clientStatus.set(userId, 'ready');
+            this.clientStartTimes.set(userId, Date.now());
 
             // Get phone number
             const info = client.info;
@@ -270,98 +379,70 @@ class ClientManager {
                 // Get the chat ID - for group messages from self, use message.to
                 const chatId = message.fromMe ? message.to : message.from;
 
-                // Only process group messages
+                // Only process group messages from monitored groups
                 if (chatId && chatId.endsWith('@g.us')) {
-                    const chat = await message.getChat();
+                    // Skip non-monitored groups immediately (no Puppeteer calls)
+                    if (!this._isGroupMonitored(userId, chatId)) return;
 
-                    // Get contact safely
-                    let contact = null;
-                    try {
-                        contact = await message.getContact();
-                    } catch (contactErr) {
-                        console.log(`[WARN] Could not get contact for message: ${contactErr.message}`);
+                    // Get group name from cache or fetch once (avoid getChat() Puppeteer call)
+                    let groupName = 'Unknown Group';
+                    const cachedChat = this.chatNameCache?.get(chatId);
+                    if (cachedChat && (Date.now() - cachedChat.timestamp) < (this.CHAT_NAME_CACHE_TTL || 30 * 60 * 1000)) {
+                        groupName = cachedChat.name;
+                    } else {
+                        try {
+                            const chat = await message.getChat();
+                            groupName = chat.name;
+                            if (!this.chatNameCache) this.chatNameCache = new Map();
+                            this.chatNameCache.set(chatId, { name: groupName, timestamp: Date.now() });
+                        } catch (chatErr) {
+                            // Use cached name even if expired, or fallback
+                            if (cachedChat) groupName = cachedChat.name;
+                        }
                     }
 
-                    // Get sender phone number - try multiple sources
+                    // Get sender info directly from message data (no getContact() Puppeteer call)
                     const senderId = message.author || message.from;
-                let senderPhone = '';
+                    let senderPhone = '';
+                    let senderName = 'Unknown';
 
-                // Try to get phone from contact.number first
-                if (contact?.number) {
-                    senderPhone = contact.number;
-                }
-                // Try contact.id.user if it's a phone number format (not LID)
-                else if (contact?.id?.user && !contact.id._serialized.endsWith('@lid')) {
-                    senderPhone = contact.id.user;
-                }
-                // For own messages, try client.info
-                else if (message.fromMe && client.info?.wid?.user) {
-                    senderPhone = client.info.wid.user;
-                }
-                // Fallback: try to extract from @c.us format
-                else if (senderId && senderId.includes('@c.us')) {
-                    senderPhone = senderId.split('@')[0];
-                }
+                    // Extract phone from senderId
+                    if (message.fromMe && client.info?.wid?.user) {
+                        senderPhone = client.info.wid.user;
+                        senderName = 'You';
+                    } else if (senderId && senderId.includes('@c.us')) {
+                        senderPhone = senderId.split('@')[0];
+                    } else if (senderId && senderId.includes('@lid')) {
+                        senderPhone = senderId.split('@')[0];
+                    }
 
-                const senderName = message.fromMe ? 'You' : (contact?.pushname || contact?.name || 'Unknown');
+                    // Use notifyName from message data (no Puppeteer call needed)
+                    if (!message.fromMe) {
+                        senderName = message._data?.notifyName || senderPhone || 'Unknown';
+                    }
 
-                // Process message content - replace mention IDs with names
-                let processedContent = message.body || '';
-                const mentionedPhones = []; // Collect phone numbers of mentioned contacts
+                    // Process mentions without getMentions() Puppeteer call
+                    let processedContent = message.body || '';
+                    const mentionedPhones = [];
 
-                try {
-                    // Get all mentions in the message
-                    const mentions = await message.getMentions();
-
-                    if (mentions && mentions.length > 0) {
-                        for (const mentionedContact of mentions) {
-                            // Get the name to display
-                            const mentionName = mentionedContact.pushname ||
-                                               mentionedContact.name ||
-                                               mentionedContact.number ||
-                                               (mentionedContact.id?.user && !mentionedContact.id._serialized.endsWith('@lid')
-                                                   ? mentionedContact.id.user
-                                                   : 'Unknown');
-
-                            // Get phone number for the mention
-                            let mentionPhone = '';
-                            if (mentionedContact.number) {
-                                mentionPhone = mentionedContact.number;
-                            } else if (mentionedContact.id?.user && !mentionedContact.id._serialized.endsWith('@lid')) {
-                                mentionPhone = mentionedContact.id.user;
-                            }
-
-                            // Add to mentionedPhones list for agent detection
+                    // Use mentionedIds (already on message object, no Puppeteer call)
+                    const mentionedIds = message.mentionedIds || [];
+                    if (mentionedIds.length > 0) {
+                        for (const mentionId of mentionedIds) {
+                            const mentionIdStr = mentionId._serialized || mentionId;
+                            const mentionPhone = mentionIdStr.split('@')[0];
                             if (mentionPhone) {
                                 mentionedPhones.push(mentionPhone);
                             }
 
-                            // Replace the @ID pattern with @Name (phone)
-                            // WhatsApp uses format @LIDNUMBER or @PHONENUMBER in raw body
-                            const lidId = mentionedContact.id?._serialized?.replace('@c.us', '').replace('@lid', '');
-                            const userId = mentionedContact.id?.user;
-
-                            // Try to replace various ID formats
-                            if (lidId) {
-                                const pattern = new RegExp(`@${lidId}`, 'g');
-                                const replacement = mentionPhone
-                                    ? `@${mentionName} (${mentionPhone})`
-                                    : `@${mentionName}`;
-                                processedContent = processedContent.replace(pattern, replacement);
-                            }
-                            if (userId && userId !== lidId) {
-                                const pattern = new RegExp(`@${userId}`, 'g');
-                                const replacement = mentionPhone
-                                    ? `@${mentionName} (${mentionPhone})`
-                                    : `@${mentionName}`;
-                                processedContent = processedContent.replace(pattern, replacement);
+                            // Replace @ID patterns in content with @phone
+                            const idWithoutSuffix = mentionIdStr.replace('@c.us', '').replace('@lid', '');
+                            if (idWithoutSuffix) {
+                                const pattern = new RegExp(`@${idWithoutSuffix}`, 'g');
+                                processedContent = processedContent.replace(pattern, `@${mentionPhone}`);
                             }
                         }
                     }
-                } catch (err) {
-                    console.error(`Error processing mentions:`, err.message);
-                    // Keep original content if mention processing fails
-                }
 
                 this.redisPublisher.publish('whatsapp:events', {
                     type: 'message',
@@ -369,7 +450,7 @@ class ClientManager {
                     message: {
                         id: message.id._serialized,
                         groupId: chatId,
-                        groupName: chat.name,
+                        groupName: groupName,
                         senderId: senderId,
                         senderName: senderName,
                         senderPhone: senderPhone,
@@ -382,13 +463,13 @@ class ClientManager {
 
                 // Check for voice messages (certificates)
                 if (message.type === 'ptt' || message.type === 'audio') {
-                    console.log(`🎤 Voice message detected from ${senderName} in ${chat.name}`);
+                    console.log(`Voice message detected from ${senderName} in ${groupName}`);
                     this.redisPublisher.publish('whatsapp:events', {
                         type: 'certificate',
                         userId,
                         event: {
                             groupId: chatId,
-                            groupName: chat.name,
+                            groupName: groupName,
                             memberId: senderId,
                             memberName: senderName,
                             memberPhone: senderPhone,
@@ -404,6 +485,8 @@ class ClientManager {
 
         client.on('group_join', async (notification) => {
             try {
+                // Skip non-monitored groups
+                if (!this._isGroupMonitored(userId, notification.chatId)) return;
                 console.log(`Group join event for user ${userId}`);
                 const chat = await notification.getChat();
 
@@ -444,6 +527,8 @@ class ClientManager {
         });
 
         client.on('group_leave', async (notification) => {
+            // Skip non-monitored groups
+            if (!this._isGroupMonitored(userId, notification.chatId)) return;
             console.log(`Group leave event for user ${userId}`);
             try {
                 const chat = await notification.getChat();
@@ -622,6 +707,13 @@ class ClientManager {
             return [];
         }
 
+        // Check members cache first
+        const cached = this.membersCache.get(groupId);
+        if (cached && (Date.now() - cached.timestamp) < this.MEMBERS_CACHE_TTL) {
+            console.log(`[CACHE] Returning cached members for group ${groupId} (${cached.members.length} members)`);
+            return cached.members;
+        }
+
         // Use operation queue to prevent concurrent calls
         return this._queueOperation(userId, async () => {
             try {
@@ -630,23 +722,15 @@ class ClientManager {
                     return [];
                 }
 
-                const members = [];
-                for (const participant of chat.participants) {
-                    // Safely get contact - may fail for some participant types
-                    let contact = null;
-                    try {
-                        contact = await client.getContactById(participant.id._serialized);
-                    } catch (contactErr) {
-                        // Silently handle - don't log every failure to reduce noise
-                    }
+                const members = chat.participants.map(participant => ({
+                    id: participant.id._serialized,
+                    name: participant.id.user,
+                    phone: participant.id.user,
+                    isAdmin: participant.isAdmin || participant.isSuperAdmin
+                }));
 
-                    members.push({
-                        id: participant.id._serialized,
-                        name: contact?.pushname || contact?.name || participant.id.user,
-                        phone: participant.id.user,
-                        isAdmin: participant.isAdmin || participant.isSuperAdmin
-                    });
-                }
+                // Cache the results
+                this.membersCache.set(groupId, { members, timestamp: Date.now() });
 
                 return members;
             } catch (error) {
@@ -1238,6 +1322,7 @@ class ClientManager {
             this.qrCodes.delete(userId);
             this.groupsCache.delete(userId);
             this.operationQueues.delete(userId);
+            // Don't delete monitoredGroups — preserved for restart/reconnect
 
             // Clear QR timeout if exists
             if (this.qrTimeouts.has(userId)) {

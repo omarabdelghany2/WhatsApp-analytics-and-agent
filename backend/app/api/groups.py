@@ -39,8 +39,21 @@ def get_groups(
     return groups
 
 
+async def _sync_monitored_groups(user_id: int, db: Session):
+    """Sync the monitored groups list to the WhatsApp service (fire-and-forget)"""
+    try:
+        monitored = db.query(MonitoredGroup).filter(
+            MonitoredGroup.user_id == user_id,
+            MonitoredGroup.is_active == True
+        ).all()
+        group_ids = [g.whatsapp_group_id for g in monitored]
+        await whatsapp_bridge.sync_monitored_groups(user_id, group_ids)
+    except Exception as e:
+        print(f"[SYNC] Failed to sync monitored groups for user {user_id}: {e}")
+
+
 @router.post("/", response_model=GroupResponse, status_code=status.HTTP_201_CREATED)
-def add_group(
+async def add_group(
     group_data: GroupCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -64,6 +77,7 @@ def add_group(
         existing.member_count = group_data.member_count
         db.commit()
         db.refresh(existing)
+        await _sync_monitored_groups(current_user.id, db)
         return existing
 
     # Create new monitored group
@@ -77,11 +91,13 @@ def add_group(
     db.commit()
     db.refresh(group)
 
+    await _sync_monitored_groups(current_user.id, db)
+
     return group
 
 
 @router.delete("/{group_id}")
-def remove_group(
+async def remove_group(
     group_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -101,6 +117,8 @@ def remove_group(
     # Soft delete
     group.is_active = False
     db.commit()
+
+    await _sync_monitored_groups(current_user.id, db)
 
     return {"success": True, "message": "Group removed from monitoring"}
 

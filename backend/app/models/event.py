@@ -24,6 +24,7 @@ class Event(Base):
     __table_args__ = (
         Index('idx_events_type_date', 'event_type', 'event_date'),
         Index('idx_events_user_group', 'user_id', 'group_id'),
+        Index('idx_events_user_type_date', 'user_id', 'event_type', 'event_date'),
     )
 
     # Relationships

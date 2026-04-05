@@ -114,7 +114,7 @@ class MessageScheduler:
             return False
 
     async def process_due_tasks(self):
-        """Process all tasks that are due"""
+        """Process all tasks that are due — different users run in parallel"""
         db = SessionLocal()
         try:
             now = datetime.utcnow()
@@ -124,31 +124,48 @@ class MessageScheduler:
                 ScheduledMessage.scheduled_at <= now
             ).all()
 
-            if due_tasks:
-                print(f"[SCHEDULER] Found {len(due_tasks)} tasks to process at {now}", flush=True)
+            if not due_tasks:
+                return
 
+            print(f"[SCHEDULER] Found {len(due_tasks)} tasks to process at {now}", flush=True)
+
+            # Group tasks by user for parallel processing
+            tasks_by_user = {}
             for task in due_tasks:
-                # Route to appropriate handler based on task_type
-                task_type = task.task_type or 'broadcast'
+                tasks_by_user.setdefault(task.user_id, []).append(task)
 
-                if task_type == 'broadcast':
-                    await self._process_broadcast(db, task)
-                elif task_type == 'poll':
-                    await self._process_poll(db, task)
-                elif task_type == 'open_group':
-                    await self._process_group_settings(db, task, admin_only=False)
-                elif task_type == 'close_group':
-                    await self._process_group_settings(db, task, admin_only=True)
-                else:
-                    print(f"[SCHEDULER] Unknown task type: {task_type}", flush=True)
+            async def process_user_tasks(user_tasks):
+                """Process all tasks for a single user sequentially (they share one WhatsApp client)"""
+                for task in user_tasks:
+                    task_type = task.task_type or 'broadcast'
+                    try:
+                        if task_type == 'broadcast':
+                            await self._process_broadcast(db, task)
+                        elif task_type == 'poll':
+                            await self._process_poll(db, task)
+                        elif task_type == 'open_group':
+                            await self._process_group_settings(db, task, admin_only=False)
+                        elif task_type == 'close_group':
+                            await self._process_group_settings(db, task, admin_only=True)
+                        else:
+                            print(f"[SCHEDULER] Unknown task type: {task_type}", flush=True)
+                    except Exception as e:
+                        print(f"[SCHEDULER] Error processing task {task.id}: {e}", flush=True)
+
+            # Run different users' tasks in parallel
+            await asyncio.gather(*[
+                process_user_tasks(tasks) for tasks in tasks_by_user.values()
+            ])
 
         except Exception as e:
             print(f"[SCHEDULER] Error processing due tasks: {e}", flush=True)
         finally:
             db.close()
 
+    BATCH_SIZE = 5  # Send to 5 groups concurrently per batch
+
     async def _process_broadcast(self, db: Session, scheduled_msg: ScheduledMessage):
-        """Send a scheduled message to all target groups with delays"""
+        """Send a scheduled message in batches of 5 groups"""
         print(f"[SCHEDULER] Processing message {scheduled_msg.id} for user {scheduled_msg.user_id}", flush=True)
 
         # Mark as sending
@@ -160,81 +177,70 @@ class MessageScheduler:
             groups_sent = 0
             groups_failed = 0
             errors = []
-            has_media = bool(scheduled_msg.media_path)  # Media is on WhatsApp service's volume
+            has_media = bool(scheduled_msg.media_path)
 
-            for i, group_id in enumerate(group_ids):
-                # 30-second delay between groups (except first)
-                if i > 0:
-                    print(f"[SCHEDULER] Waiting 30 seconds before next group...", flush=True)
-                    await asyncio.sleep(30)
+            # Health check once before starting
+            if not await self._ensure_client_ready(scheduled_msg.user_id):
+                errors.append("WhatsApp client not ready - recovery failed")
+                groups_failed = len(group_ids)
+                print(f"[SCHEDULER] Aborting broadcast - client not ready", flush=True)
+            else:
+                # Batch-load all groups upfront (1 query instead of N)
+                all_groups = db.query(MonitoredGroup).filter(
+                    MonitoredGroup.id.in_(group_ids),
+                    MonitoredGroup.user_id == scheduled_msg.user_id
+                ).all()
+                groups_map = {g.id: g for g in all_groups}
 
-                try:
-                    # Health check before each send - ensure client is ready
-                    if not await self._ensure_client_ready(scheduled_msg.user_id):
-                        errors.append("WhatsApp client not ready - recovery failed")
-                        groups_failed += len(group_ids) - i  # Fail remaining groups
-                        print(f"[SCHEDULER] Aborting broadcast - client not ready", flush=True)
-                        break  # Exit loop - can't send without client
+                # Process in batches of 5
+                for batch_start in range(0, len(group_ids), self.BATCH_SIZE):
+                    batch = group_ids[batch_start:batch_start + self.BATCH_SIZE]
 
-                    # Get the WhatsApp group ID from the monitored group
-                    group = db.query(MonitoredGroup).filter(
-                        MonitoredGroup.id == group_id,
-                        MonitoredGroup.user_id == scheduled_msg.user_id
-                    ).first()
+                    async def send_to_group(gid):
+                        group = groups_map.get(gid)
+                        if not group:
+                            return {'group_id': gid, 'success': False, 'error': f'Group {gid} not found', 'group_name': None}
+                        try:
+                            if has_media:
+                                result = await self._send_with_retry(
+                                    lambda g=group: whatsapp_bridge.send_media_from_path(
+                                        user_id=scheduled_msg.user_id, group_id=g.whatsapp_group_id,
+                                        file_path=scheduled_msg.media_path, caption=scheduled_msg.content,
+                                        mention_all=(scheduled_msg.mention_type == 'all'),
+                                        mention_ids=scheduled_msg.mention_ids if scheduled_msg.mention_type == 'selected' else None
+                                    )
+                                )
+                            else:
+                                result = await self._send_with_retry(
+                                    lambda g=group: whatsapp_bridge.send_message(
+                                        user_id=scheduled_msg.user_id, group_id=g.whatsapp_group_id,
+                                        content=scheduled_msg.content,
+                                        mention_all=(scheduled_msg.mention_type == 'all'),
+                                        mention_ids=scheduled_msg.mention_ids if scheduled_msg.mention_type == 'selected' else None
+                                    )
+                                )
+                            return {'group_id': gid, 'group_name': group.group_name, **result}
+                        except Exception as e:
+                            return {'group_id': gid, 'success': False, 'error': str(e), 'group_name': group.group_name}
 
-                    if not group:
-                        errors.append(f"Group {group_id} not found")
-                        groups_failed += 1
-                        continue
+                    results = await asyncio.gather(*[send_to_group(gid) for gid in batch])
 
-                    print(f"[SCHEDULER] Sending to group: {group.group_name}", flush=True)
-
-                    # Send the message with retry logic for timeout errors
-                    if has_media:
-                        # Media is on WhatsApp service's volume, use send_media_from_path
-                        result = await self._send_with_retry(
-                            lambda g=group: whatsapp_bridge.send_media_from_path(
-                                user_id=scheduled_msg.user_id,
-                                group_id=g.whatsapp_group_id,
-                                file_path=scheduled_msg.media_path,
-                                caption=scheduled_msg.content,
-                                mention_all=(scheduled_msg.mention_type == 'all'),
-                                mention_ids=scheduled_msg.mention_ids if scheduled_msg.mention_type == 'selected' else None
-                            )
-                        )
-                    else:
-                        result = await self._send_with_retry(
-                            lambda g=group: whatsapp_bridge.send_message(
-                                user_id=scheduled_msg.user_id,
-                                group_id=g.whatsapp_group_id,
-                                content=scheduled_msg.content,
-                                mention_all=(scheduled_msg.mention_type == 'all'),
-                                mention_ids=scheduled_msg.mention_ids if scheduled_msg.mention_type == 'selected' else None
-                            )
-                        )
-
-                    if result.get('success'):
-                        groups_sent += 1
-                        print(f"[SCHEDULER] Successfully sent to {group.group_name}", flush=True)
-
-                        # Notify user of progress via WebSocket
-                        await websocket_manager.send_to_user(scheduled_msg.user_id, {
-                            'type': 'broadcast_progress',
-                            'message_id': scheduled_msg.id,
-                            'group_name': group.group_name,
-                            'groups_sent': groups_sent,
-                            'total_groups': len(group_ids)
-                        })
-                    else:
-                        groups_failed += 1
-                        error_msg = result.get('error', 'Unknown error')
-                        errors.append(f"{group.group_name}: {error_msg}")
-                        print(f"[SCHEDULER] Failed to send to {group.group_name}: {error_msg}", flush=True)
-
-                except Exception as e:
-                    groups_failed += 1
-                    errors.append(f"Group {group_id}: {str(e)}")
-                    print(f"[SCHEDULER] Error sending to group {group_id}: {e}", flush=True)
+                    for r in results:
+                        if r.get('success'):
+                            groups_sent += 1
+                            print(f"[SCHEDULER] Successfully sent to {r.get('group_name')}", flush=True)
+                            await websocket_manager.send_to_user(scheduled_msg.user_id, {
+                                'type': 'broadcast_progress',
+                                'message_id': scheduled_msg.id,
+                                'group_name': r.get('group_name'),
+                                'groups_sent': groups_sent,
+                                'total_groups': len(group_ids)
+                            })
+                        else:
+                            groups_failed += 1
+                            name = r.get('group_name') or r.get('group_id')
+                            errors.append(f"{name}: {r.get('error', 'Unknown error')}")
+                            print(f"[SCHEDULER] Failed to send to {name}: {r.get('error')}", flush=True)
 
             # Update final status
             scheduled_msg.groups_sent = groups_sent
@@ -251,7 +257,6 @@ class MessageScheduler:
             if errors:
                 scheduled_msg.error_message = "; ".join(errors)
 
-            # Clean up media file on WhatsApp service after broadcast
             if has_media:
                 try:
                     await whatsapp_bridge.delete_media(scheduled_msg.media_path)
@@ -260,7 +265,6 @@ class MessageScheduler:
 
             db.commit()
 
-            # Notify user of completion via WebSocket
             await websocket_manager.send_to_user(scheduled_msg.user_id, {
                 'type': 'broadcast_complete',
                 'message_id': scheduled_msg.id,
@@ -278,7 +282,6 @@ class MessageScheduler:
             scheduled_msg.error_message = str(e)
             db.commit()
 
-            # Notify user of failure
             await websocket_manager.send_to_user(scheduled_msg.user_id, {
                 'type': 'broadcast_complete',
                 'message_id': scheduled_msg.id,
@@ -300,68 +303,59 @@ class MessageScheduler:
             groups_failed = 0
             errors = []
 
-            for i, group_id in enumerate(group_ids):
-                # 30-second delay between groups (except first)
-                if i > 0:
-                    print(f"[SCHEDULER] Waiting 30 seconds before next group...", flush=True)
-                    await asyncio.sleep(30)
+            # Health check once before starting
+            if not await self._ensure_client_ready(scheduled_msg.user_id):
+                errors.append("WhatsApp client not ready - recovery failed")
+                groups_failed = len(group_ids)
+                print(f"[SCHEDULER] Aborting poll - client not ready", flush=True)
+            else:
+                # Batch-load all groups upfront
+                all_groups = db.query(MonitoredGroup).filter(
+                    MonitoredGroup.id.in_(group_ids),
+                    MonitoredGroup.user_id == scheduled_msg.user_id
+                ).all()
+                groups_map = {g.id: g for g in all_groups}
 
-                try:
-                    # Health check before each send - ensure client is ready
-                    if not await self._ensure_client_ready(scheduled_msg.user_id):
-                        errors.append("WhatsApp client not ready - recovery failed")
-                        groups_failed += len(group_ids) - i  # Fail remaining groups
-                        print(f"[SCHEDULER] Aborting poll - client not ready", flush=True)
-                        break  # Exit loop - can't send without client
+                # Process in batches of 5
+                for batch_start in range(0, len(group_ids), self.BATCH_SIZE):
+                    batch = group_ids[batch_start:batch_start + self.BATCH_SIZE]
 
-                    # Get the WhatsApp group ID from the monitored group
-                    group = db.query(MonitoredGroup).filter(
-                        MonitoredGroup.id == group_id,
-                        MonitoredGroup.user_id == scheduled_msg.user_id
-                    ).first()
+                    async def send_poll_to_group(gid):
+                        group = groups_map.get(gid)
+                        if not group:
+                            return {'group_id': gid, 'success': False, 'error': f'Group {gid} not found', 'group_name': None}
+                        try:
+                            result = await self._send_with_retry(
+                                lambda g=group: whatsapp_bridge.send_poll(
+                                    user_id=scheduled_msg.user_id, group_id=g.whatsapp_group_id,
+                                    question=scheduled_msg.content, options=scheduled_msg.poll_options or [],
+                                    allow_multiple_answers=scheduled_msg.poll_allow_multiple or False,
+                                    mention_all=(scheduled_msg.mention_type == 'all'),
+                                    mention_ids=scheduled_msg.mention_ids if scheduled_msg.mention_type == 'selected' else None
+                                )
+                            )
+                            return {'group_id': gid, 'group_name': group.group_name, **result}
+                        except Exception as e:
+                            return {'group_id': gid, 'success': False, 'error': str(e), 'group_name': group.group_name}
 
-                    if not group:
-                        errors.append(f"Group {group_id} not found")
-                        groups_failed += 1
-                        continue
+                    results = await asyncio.gather(*[send_poll_to_group(gid) for gid in batch])
 
-                    print(f"[SCHEDULER] Sending poll to group: {group.group_name}", flush=True)
-
-                    # Send the poll with retry logic for timeout errors
-                    result = await self._send_with_retry(
-                        lambda g=group: whatsapp_bridge.send_poll(
-                            user_id=scheduled_msg.user_id,
-                            group_id=g.whatsapp_group_id,
-                            question=scheduled_msg.content,  # Poll question stored in content
-                            options=scheduled_msg.poll_options or [],
-                            allow_multiple_answers=scheduled_msg.poll_allow_multiple or False,
-                            mention_all=(scheduled_msg.mention_type == 'all'),
-                            mention_ids=scheduled_msg.mention_ids if scheduled_msg.mention_type == 'selected' else None
-                        )
-                    )
-
-                    if result.get('success'):
-                        groups_sent += 1
-                        print(f"[SCHEDULER] Successfully sent poll to {group.group_name}", flush=True)
-
-                        # Notify user of progress via WebSocket
-                        await websocket_manager.send_to_user(scheduled_msg.user_id, {
-                            'type': 'poll_progress',
-                            'message_id': scheduled_msg.id,
-                            'group_name': group.group_name,
-                            'groups_sent': groups_sent,
-                            'total_groups': len(group_ids)
-                        })
-                    else:
-                        groups_failed += 1
-                        error_msg = result.get('error', 'Unknown error')
-                        errors.append(f"{group.group_name}: {error_msg}")
-                        print(f"[SCHEDULER] Failed to send poll to {group.group_name}: {error_msg}", flush=True)
-
-                except Exception as e:
-                    groups_failed += 1
-                    errors.append(f"Group {group_id}: {str(e)}")
-                    print(f"[SCHEDULER] Error sending poll to group {group_id}: {e}", flush=True)
+                    for r in results:
+                        if r.get('success'):
+                            groups_sent += 1
+                            print(f"[SCHEDULER] Successfully sent poll to {r.get('group_name')}", flush=True)
+                            await websocket_manager.send_to_user(scheduled_msg.user_id, {
+                                'type': 'poll_progress',
+                                'message_id': scheduled_msg.id,
+                                'group_name': r.get('group_name'),
+                                'groups_sent': groups_sent,
+                                'total_groups': len(group_ids)
+                            })
+                        else:
+                            groups_failed += 1
+                            name = r.get('group_name') or r.get('group_id')
+                            errors.append(f"{name}: {r.get('error', 'Unknown error')}")
+                            print(f"[SCHEDULER] Failed to send poll to {name}: {r.get('error')}", flush=True)
 
             # Update final status
             scheduled_msg.groups_sent = groups_sent
@@ -380,7 +374,6 @@ class MessageScheduler:
 
             db.commit()
 
-            # Notify user of completion via WebSocket
             await websocket_manager.send_to_user(scheduled_msg.user_id, {
                 'type': 'poll_complete',
                 'message_id': scheduled_msg.id,
@@ -398,7 +391,6 @@ class MessageScheduler:
             scheduled_msg.error_message = str(e)
             db.commit()
 
-            # Notify user of failure
             await websocket_manager.send_to_user(scheduled_msg.user_id, {
                 'type': 'poll_complete',
                 'message_id': scheduled_msg.id,
@@ -420,77 +412,65 @@ class MessageScheduler:
             groups_failed = 0
             errors = []
 
-            for i, group_id in enumerate(group_ids):
-                # 30-second delay between groups (except first)
-                if i > 0:
-                    print(f"[SCHEDULER] Waiting 30 seconds before next group...", flush=True)
-                    await asyncio.sleep(30)
+            # Health check once before starting
+            if not await self._ensure_client_ready(task.user_id):
+                errors.append("WhatsApp client not ready - recovery failed")
+                groups_failed = len(group_ids)
+                print(f"[SCHEDULER] Aborting group settings - client not ready", flush=True)
+            else:
+                # Batch-load all groups upfront
+                all_groups = db.query(MonitoredGroup).filter(
+                    MonitoredGroup.id.in_(group_ids),
+                    MonitoredGroup.user_id == task.user_id
+                ).all()
+                groups_map = {g.id: g for g in all_groups}
 
-                try:
-                    # Health check before each send - ensure client is ready
-                    if not await self._ensure_client_ready(task.user_id):
-                        errors.append("WhatsApp client not ready - recovery failed")
-                        groups_failed += len(group_ids) - i  # Fail remaining groups
-                        print(f"[SCHEDULER] Aborting group settings - client not ready", flush=True)
-                        break  # Exit loop - can't send without client
+                # Process in batches of 5
+                for batch_start in range(0, len(group_ids), self.BATCH_SIZE):
+                    batch = group_ids[batch_start:batch_start + self.BATCH_SIZE]
 
-                    # Get the WhatsApp group ID from the monitored group
-                    group = db.query(MonitoredGroup).filter(
-                        MonitoredGroup.id == group_id,
-                        MonitoredGroup.user_id == task.user_id
-                    ).first()
-
-                    if not group:
-                        errors.append(f"Group {group_id} not found")
-                        groups_failed += 1
-                        continue
-
-                    print(f"[SCHEDULER] Setting {action} for group: {group.group_name}", flush=True)
-
-                    # Change group settings with retry logic
-                    result = await self._send_with_retry(
-                        lambda g=group: whatsapp_bridge.set_group_admin_only(
-                            user_id=task.user_id,
-                            group_id=g.whatsapp_group_id,
-                            admin_only=admin_only
-                        )
-                    )
-
-                    if result.get('success'):
-                        groups_success += 1
-                        print(f"[SCHEDULER] Successfully set {action} for {group.group_name}", flush=True)
-
-                        # Send optional message if configured (also with retry)
-                        if task.content:
-                            await self._send_with_retry(
-                                lambda g=group: whatsapp_bridge.send_message(
-                                    user_id=task.user_id,
-                                    group_id=g.whatsapp_group_id,
-                                    content=task.content,
-                                    mention_all=(task.mention_type == 'all'),
-                                    mention_ids=task.mention_ids if task.mention_type == 'selected' else None
+                    async def set_group_settings(gid):
+                        group = groups_map.get(gid)
+                        if not group:
+                            return {'group_id': gid, 'success': False, 'error': f'Group {gid} not found', 'group_name': None}
+                        try:
+                            result = await self._send_with_retry(
+                                lambda g=group: whatsapp_bridge.set_group_admin_only(
+                                    user_id=task.user_id, group_id=g.whatsapp_group_id, admin_only=admin_only
                                 )
                             )
+                            if result.get('success') and task.content:
+                                await self._send_with_retry(
+                                    lambda g=group: whatsapp_bridge.send_message(
+                                        user_id=task.user_id, group_id=g.whatsapp_group_id,
+                                        content=task.content,
+                                        mention_all=(task.mention_type == 'all'),
+                                        mention_ids=task.mention_ids if task.mention_type == 'selected' else None
+                                    )
+                                )
+                            return {'group_id': gid, 'group_name': group.group_name, **result}
+                        except Exception as e:
+                            return {'group_id': gid, 'success': False, 'error': str(e), 'group_name': group.group_name}
 
-                        # Notify user of progress via WebSocket
-                        await websocket_manager.send_to_user(task.user_id, {
-                            'type': 'settings_progress',
-                            'task_id': task.id,
-                            'action': action,
-                            'group_name': group.group_name,
-                            'groups_done': groups_success + groups_failed,
-                            'total_groups': len(group_ids)
-                        })
-                    else:
-                        groups_failed += 1
-                        error_msg = result.get('error', 'Unknown error')
-                        errors.append(f"{group.group_name}: {error_msg}")
-                        print(f"[SCHEDULER] Failed to set {action} for {group.group_name}: {error_msg}", flush=True)
+                    results = await asyncio.gather(*[set_group_settings(gid) for gid in batch])
 
-                except Exception as e:
-                    groups_failed += 1
-                    errors.append(f"Group {group_id}: {str(e)}")
-                    print(f"[SCHEDULER] Error setting {action} for group {group_id}: {e}", flush=True)
+                    for r in results:
+                        if r.get('success'):
+                            groups_success += 1
+                            print(f"[SCHEDULER] Successfully set {action} for {r.get('group_name')}", flush=True)
+                            await websocket_manager.send_to_user(task.user_id, {
+                                'type': 'settings_progress',
+                                'task_id': task.id,
+                                'action': action,
+                                'group_name': r.get('group_name'),
+                                'groups_done': groups_success + groups_failed,
+                                'total_groups': len(group_ids)
+                            })
+                        else:
+                            groups_failed += 1
+                            name = r.get('group_name') or r.get('group_id')
+                            errors.append(f"{name}: {r.get('error', 'Unknown error')}")
+                            print(f"[SCHEDULER] Failed to set {action} for {name}: {r.get('error')}", flush=True)
 
             # Update task status
             task.groups_sent = groups_success

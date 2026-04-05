@@ -24,6 +24,9 @@ class RedisSubscriber:
         self.redis = None
         self.pubsub = None
         self.running = False
+        # Cache monitored groups to avoid DB query per message
+        self._monitored_cache = {}  # user_id -> { groups: {wa_group_id: MonitoredGroup}, expires: float }
+        self._CACHE_TTL = 60  # seconds
 
     async def connect(self):
         self.redis = redis.from_url(settings.redis_url)
@@ -55,6 +58,31 @@ class RedisSubscriber:
         if self.redis:
             await self.redis.close()
 
+    def _get_monitored_group(self, db: Session, user_id: int, wa_group_id: str):
+        """Get monitored group from cache or DB. Returns MonitoredGroup or None."""
+        import time
+        now = time.time()
+        cached = self._monitored_cache.get(user_id)
+
+        if cached and now < cached['expires']:
+            return cached['groups'].get(wa_group_id)
+
+        # Cache miss or expired — refresh from DB
+        groups = db.query(MonitoredGroup).filter(
+            MonitoredGroup.user_id == user_id,
+            MonitoredGroup.is_active == True
+        ).all()
+        groups_map = {g.whatsapp_group_id: g for g in groups}
+        self._monitored_cache[user_id] = {
+            'groups': groups_map,
+            'expires': now + self._CACHE_TTL
+        }
+        return groups_map.get(wa_group_id)
+
+    def _invalidate_monitored_cache(self, user_id: int):
+        """Invalidate the monitored groups cache for a user."""
+        self._monitored_cache.pop(user_id, None)
+
     async def handle_message(self, message):
         """Handle incoming Redis message"""
         try:
@@ -84,6 +112,11 @@ class RedisSubscriber:
                     await self.handle_member_event(db, user_id, data, "LEAVE")
                 elif event_type == "certificate":
                     await self.handle_certificate_event(db, user_id, data)
+                elif event_type == "restarting":
+                    print(f"[RESTART] Browser restarting for user {user_id}")
+                    await websocket_manager.send_to_user(user_id, {
+                        "type": "restarting"
+                    })
             finally:
                 db.close()
 
@@ -138,6 +171,18 @@ class RedisSubscriber:
             "phoneNumber": data.get("phoneNumber")
         })
 
+        # Sync monitored groups to WhatsApp service
+        try:
+            monitored = db.query(MonitoredGroup).filter(
+                MonitoredGroup.user_id == user_id,
+                MonitoredGroup.is_active == True
+            ).all()
+            group_ids = [g.whatsapp_group_id for g in monitored]
+            await whatsapp_bridge.sync_monitored_groups(user_id, group_ids)
+            print(f"[READY] Synced {len(group_ids)} monitored groups for user {user_id}")
+        except Exception as e:
+            print(f"[READY] Failed to sync monitored groups for user {user_id}: {e}")
+
     async def handle_disconnected(self, db: Session, user_id: int, data: dict):
         """Handle disconnected event"""
         session = db.query(WhatsAppSession).filter(
@@ -161,15 +206,10 @@ class RedisSubscriber:
 
         print(f"[REDIS] New message for user {user_id} in group {group_id_wa}")
 
-        # Find monitored group
-        group = db.query(MonitoredGroup).filter(
-            MonitoredGroup.user_id == user_id,
-            MonitoredGroup.whatsapp_group_id == group_id_wa,
-            MonitoredGroup.is_active == True
-        ).first()
+        # Find monitored group (cached)
+        group = self._get_monitored_group(db, user_id, group_id_wa)
 
         if not group:
-            print(f"[REDIS] Group {group_id_wa} not monitored by user {user_id}")
             return  # Not monitoring this group
 
         print(f"[REDIS] Group found: {group.group_name} (id: {group.id})")
@@ -322,12 +362,8 @@ class RedisSubscriber:
         event_data = data.get("event", {})
         group_id_wa = event_data.get("groupId")
 
-        # Find monitored group
-        group = db.query(MonitoredGroup).filter(
-            MonitoredGroup.user_id == user_id,
-            MonitoredGroup.whatsapp_group_id == group_id_wa,
-            MonitoredGroup.is_active == True
-        ).first()
+        # Find monitored group (cached)
+        group = self._get_monitored_group(db, user_id, group_id_wa)
 
         if not group:
             return  # Not monitoring this group
@@ -498,12 +534,8 @@ class RedisSubscriber:
         group_id_wa = event_data.get("groupId")
         member_phone = event_data.get("memberPhone", "")
 
-        # Find monitored group
-        group = db.query(MonitoredGroup).filter(
-            MonitoredGroup.user_id == user_id,
-            MonitoredGroup.whatsapp_group_id == group_id_wa,
-            MonitoredGroup.is_active == True
-        ).first()
+        # Find monitored group (cached)
+        group = self._get_monitored_group(db, user_id, group_id_wa)
 
         if not group:
             return  # Not monitoring this group

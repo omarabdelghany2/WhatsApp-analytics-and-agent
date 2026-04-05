@@ -369,6 +369,19 @@ class WhatsAppBridge:
             except httpx.RequestError as e:
                 return {"success": False, "error": str(e)}
 
+    async def sync_monitored_groups(self, user_id: int, group_ids: List[str]) -> Dict[str, Any]:
+        """Sync the list of monitored group IDs to the WhatsApp service"""
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    f"{self.base_url}/api/clients/{user_id}/monitored-groups",
+                    json={"groupIds": group_ids},
+                    timeout=10.0
+                )
+                return response.json()
+            except httpx.RequestError as e:
+                return {"success": False, "error": str(e)}
+
 
 # Singleton instance
 whatsapp_bridge = WhatsAppBridge()

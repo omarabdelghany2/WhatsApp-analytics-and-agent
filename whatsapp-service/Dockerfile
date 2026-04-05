@@ -43,4 +43,4 @@ COPY . .
 # Expose port
 EXPOSE 3001
 
-CMD ["node", "src/index.js"]
+CMD ["node", "--max-old-space-size=512", "src/index.js"]

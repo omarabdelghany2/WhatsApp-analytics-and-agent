@@ -26,12 +26,20 @@ const upload = multer({
         fileSize: 64 * 1024 * 1024 // 64MB max file size
     },
     fileFilter: (req, file, cb) => {
-        // Allow images, videos, audio, and documents
-        const allowedTypes = /jpeg|jpg|png|gif|webp|mp4|mov|avi|webm|mp3|ogg|wav|pdf|doc|docx|xls|xlsx|ppt|pptx|txt|zip|rar/;
+        // Block video files (too heavy for memory - base64 encoding)
+        if (file.mimetype.startsWith('video/')) {
+            return cb(new Error('Video files are not supported in broadcasts'));
+        }
+        const videoExtensions = /\.(mp4|mov|avi|webm|mkv|flv|wmv)$/i;
+        if (videoExtensions.test(file.originalname)) {
+            return cb(new Error('Video files are not supported in broadcasts'));
+        }
+
+        // Allow images, audio, and documents
+        const allowedTypes = /jpeg|jpg|png|gif|webp|mp3|ogg|wav|pdf|doc|docx|xls|xlsx|ppt|pptx|txt|zip|rar/;
         const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
         const mimetype = allowedTypes.test(file.mimetype.split('/')[1]) ||
                         file.mimetype.startsWith('image/') ||
-                        file.mimetype.startsWith('video/') ||
                         file.mimetype.startsWith('audio/') ||
                         file.mimetype.startsWith('application/');
 
@@ -44,6 +52,24 @@ const upload = multer({
 
 module.exports = (clientManager) => {
     const router = express.Router();
+
+    // Set monitored groups for a user (only process events for these groups)
+    router.post('/:userId/monitored-groups', (req, res) => {
+        try {
+            const userId = parseInt(req.params.userId);
+            const { groupIds } = req.body;
+
+            if (!Array.isArray(groupIds)) {
+                return res.status(400).json({ success: false, error: 'groupIds must be an array' });
+            }
+
+            clientManager.setMonitoredGroups(userId, groupIds);
+            res.json({ success: true, count: groupIds.length });
+        } catch (error) {
+            console.error('Error setting monitored groups:', error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
 
     // Initialize client for user
     router.post('/:userId/init', async (req, res) => {

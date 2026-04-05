@@ -67,79 +67,79 @@ class ScheduledMessageResponse(BaseModel):
     sent_at: Optional[datetime]
 
 
+BROADCAST_BATCH_SIZE = 5  # Send to 5 groups concurrently per batch
+
+
 async def send_immediate_broadcast(
     user_id: int,
     scheduled_msg: ScheduledMessage,
     db: Session
 ):
-    """Send broadcast immediately with 30-second delays between groups"""
+    """Send broadcast immediately in batches of 5 groups"""
     try:
         group_ids = scheduled_msg.group_ids or []
         groups_sent = 0
         groups_failed = 0
         errors = []
-        has_media = bool(scheduled_msg.media_path)  # Media is on WhatsApp service's volume
+        has_media = bool(scheduled_msg.media_path)
 
         # Mark as sending
         scheduled_msg.status = 'sending'
         db.commit()
 
-        for i, group_id in enumerate(group_ids):
-            # 30-second delay between groups (except first)
-            if i > 0:
-                await asyncio.sleep(30)
+        # Batch-load all groups upfront (1 query instead of N)
+        all_groups = db.query(MonitoredGroup).filter(
+            MonitoredGroup.id.in_(group_ids),
+            MonitoredGroup.user_id == user_id
+        ).all()
+        groups_map = {g.id: g for g in all_groups}
 
-            try:
-                # Get the WhatsApp group ID
-                group = db.query(MonitoredGroup).filter(
-                    MonitoredGroup.id == group_id,
-                    MonitoredGroup.user_id == user_id
-                ).first()
+        # Process in batches of 5
+        for batch_start in range(0, len(group_ids), BROADCAST_BATCH_SIZE):
+            batch = group_ids[batch_start:batch_start + BROADCAST_BATCH_SIZE]
 
+            async def send_to_group(gid):
+                group = groups_map.get(gid)
                 if not group:
-                    errors.append(f"Group {group_id} not found")
-                    groups_failed += 1
-                    continue
+                    return {'group_id': gid, 'success': False, 'error': f'Group {gid} not found', 'group_name': None}
+                try:
+                    if has_media:
+                        result = await whatsapp_bridge.send_media_from_path(
+                            user_id=user_id,
+                            group_id=group.whatsapp_group_id,
+                            file_path=scheduled_msg.media_path,
+                            caption=scheduled_msg.content,
+                            mention_all=(scheduled_msg.mention_type == 'all'),
+                            mention_ids=scheduled_msg.mention_ids if scheduled_msg.mention_type == 'selected' else None
+                        )
+                    else:
+                        result = await whatsapp_bridge.send_message(
+                            user_id=user_id,
+                            group_id=group.whatsapp_group_id,
+                            content=scheduled_msg.content,
+                            mention_all=(scheduled_msg.mention_type == 'all'),
+                            mention_ids=scheduled_msg.mention_ids if scheduled_msg.mention_type == 'selected' else None
+                        )
+                    return {'group_id': gid, 'group_name': group.group_name, **result}
+                except Exception as e:
+                    return {'group_id': gid, 'success': False, 'error': str(e), 'group_name': group.group_name}
 
-                # Send the message (with or without media)
-                if has_media:
-                    # Media is on WhatsApp service's volume, use send_media_from_path
-                    result = await whatsapp_bridge.send_media_from_path(
-                        user_id=user_id,
-                        group_id=group.whatsapp_group_id,
-                        file_path=scheduled_msg.media_path,
-                        caption=scheduled_msg.content,
-                        mention_all=(scheduled_msg.mention_type == 'all'),
-                        mention_ids=scheduled_msg.mention_ids if scheduled_msg.mention_type == 'selected' else None
-                    )
-                else:
-                    result = await whatsapp_bridge.send_message(
-                        user_id=user_id,
-                        group_id=group.whatsapp_group_id,
-                        content=scheduled_msg.content,
-                        mention_all=(scheduled_msg.mention_type == 'all'),
-                        mention_ids=scheduled_msg.mention_ids if scheduled_msg.mention_type == 'selected' else None
-                    )
+            results = await asyncio.gather(*[send_to_group(gid) for gid in batch])
 
-                if result.get('success'):
+            for r in results:
+                if r.get('success'):
                     groups_sent += 1
-
-                    # Notify progress via WebSocket
                     await websocket_manager.send_to_user(user_id, {
                         'type': 'broadcast_progress',
                         'message_id': scheduled_msg.id,
-                        'group_name': group.group_name,
+                        'group_name': r.get('group_name'),
                         'groups_sent': groups_sent,
                         'total_groups': len(group_ids)
                     })
                 else:
                     groups_failed += 1
-                    error_msg = result.get('error', 'Unknown error')
-                    errors.append(f"{group.group_name}: {error_msg}")
-
-            except Exception as e:
-                groups_failed += 1
-                errors.append(f"Group {group_id}: {str(e)}")
+                    name = r.get('group_name') or r.get('group_id')
+                    errors.append(f"{name}: {r.get('error', 'Unknown error')}")
 
         # Update final status
         scheduled_msg.groups_sent = groups_sent
@@ -193,7 +193,7 @@ async def send_immediate_poll(
     scheduled_msg: ScheduledMessage,
     db: Session
 ):
-    """Send poll immediately with 30-second delays between groups"""
+    """Send poll immediately in batches of 5 groups"""
     try:
         group_ids = scheduled_msg.group_ids or []
         groups_sent = 0
@@ -204,53 +204,51 @@ async def send_immediate_poll(
         scheduled_msg.status = 'sending'
         db.commit()
 
-        for i, group_id in enumerate(group_ids):
-            # 30-second delay between groups (except first)
-            if i > 0:
-                await asyncio.sleep(30)
+        # Batch-load all groups upfront
+        all_groups = db.query(MonitoredGroup).filter(
+            MonitoredGroup.id.in_(group_ids),
+            MonitoredGroup.user_id == user_id
+        ).all()
+        groups_map = {g.id: g for g in all_groups}
 
-            try:
-                # Get the WhatsApp group ID
-                group = db.query(MonitoredGroup).filter(
-                    MonitoredGroup.id == group_id,
-                    MonitoredGroup.user_id == user_id
-                ).first()
+        # Process in batches of 5
+        for batch_start in range(0, len(group_ids), BROADCAST_BATCH_SIZE):
+            batch = group_ids[batch_start:batch_start + BROADCAST_BATCH_SIZE]
 
+            async def send_poll_to_group(gid):
+                group = groups_map.get(gid)
                 if not group:
-                    errors.append(f"Group {group_id} not found")
-                    groups_failed += 1
-                    continue
+                    return {'group_id': gid, 'success': False, 'error': f'Group {gid} not found', 'group_name': None}
+                try:
+                    result = await whatsapp_bridge.send_poll(
+                        user_id=user_id,
+                        group_id=group.whatsapp_group_id,
+                        question=scheduled_msg.content,
+                        options=scheduled_msg.poll_options or [],
+                        allow_multiple_answers=scheduled_msg.poll_allow_multiple or False,
+                        mention_all=(scheduled_msg.mention_type == 'all'),
+                        mention_ids=scheduled_msg.mention_ids if scheduled_msg.mention_type == 'selected' else None
+                    )
+                    return {'group_id': gid, 'group_name': group.group_name, **result}
+                except Exception as e:
+                    return {'group_id': gid, 'success': False, 'error': str(e), 'group_name': group.group_name}
 
-                # Send the poll with mention support
-                result = await whatsapp_bridge.send_poll(
-                    user_id=user_id,
-                    group_id=group.whatsapp_group_id,
-                    question=scheduled_msg.content,  # Poll question stored in content
-                    options=scheduled_msg.poll_options or [],
-                    allow_multiple_answers=scheduled_msg.poll_allow_multiple or False,
-                    mention_all=(scheduled_msg.mention_type == 'all'),
-                    mention_ids=scheduled_msg.mention_ids if scheduled_msg.mention_type == 'selected' else None
-                )
+            results = await asyncio.gather(*[send_poll_to_group(gid) for gid in batch])
 
-                if result.get('success'):
+            for r in results:
+                if r.get('success'):
                     groups_sent += 1
-
-                    # Notify progress via WebSocket
                     await websocket_manager.send_to_user(user_id, {
                         'type': 'poll_progress',
                         'message_id': scheduled_msg.id,
-                        'group_name': group.group_name,
+                        'group_name': r.get('group_name'),
                         'groups_sent': groups_sent,
                         'total_groups': len(group_ids)
                     })
                 else:
                     groups_failed += 1
-                    error_msg = result.get('error', 'Unknown error')
-                    errors.append(f"{group.group_name}: {error_msg}")
-
-            except Exception as e:
-                groups_failed += 1
-                errors.append(f"Group {group_id}: {str(e)}")
+                    name = r.get('group_name') or r.get('group_id')
+                    errors.append(f"{name}: {r.get('error', 'Unknown error')}")
 
         # Update final status
         scheduled_msg.groups_sent = groups_sent
@@ -297,7 +295,7 @@ async def send_immediate_channel_broadcast(
     scheduled_msg: ScheduledMessage,
     db: Session
 ):
-    """Send channel broadcast immediately with 30-second delays between channels"""
+    """Send channel broadcast immediately in batches of 5 channels"""
     try:
         channel_ids = scheduled_msg.channel_ids or []
         channel_names = scheduled_msg.channel_names or []
@@ -310,51 +308,46 @@ async def send_immediate_channel_broadcast(
         scheduled_msg.status = 'sending'
         db.commit()
 
-        for i, channel_id in enumerate(channel_ids):
-            # 30-second delay between channels (except first)
-            if i > 0:
-                await asyncio.sleep(30)
+        # Process in batches of 5
+        for batch_start in range(0, len(channel_ids), BROADCAST_BATCH_SIZE):
+            batch_ids = channel_ids[batch_start:batch_start + BROADCAST_BATCH_SIZE]
 
-            try:
-                channel_name = channel_names[i] if i < len(channel_names) else channel_id
+            async def send_to_channel(idx):
+                ch_id = channel_ids[idx]
+                ch_name = channel_names[idx] if idx < len(channel_names) else ch_id
+                try:
+                    if has_media:
+                        result = await whatsapp_bridge.send_channel_media_from_path(
+                            user_id=user_id, channel_id=ch_id,
+                            file_path=scheduled_msg.media_path, caption=scheduled_msg.content
+                        )
+                    else:
+                        result = await whatsapp_bridge.send_channel_message(
+                            user_id=user_id, channel_id=ch_id, content=scheduled_msg.content
+                        )
+                    return {'channel_name': ch_name, **result}
+                except Exception as e:
+                    return {'channel_name': ch_name, 'success': False, 'error': str(e)}
 
-                # Send the message (with or without media)
-                if has_media:
-                    result = await whatsapp_bridge.send_channel_media_from_path(
-                        user_id=user_id,
-                        channel_id=channel_id,
-                        file_path=scheduled_msg.media_path,
-                        caption=scheduled_msg.content
-                    )
-                else:
-                    result = await whatsapp_bridge.send_channel_message(
-                        user_id=user_id,
-                        channel_id=channel_id,
-                        content=scheduled_msg.content
-                    )
+            batch_indices = list(range(batch_start, min(batch_start + BROADCAST_BATCH_SIZE, len(channel_ids))))
+            results = await asyncio.gather(*[send_to_channel(i) for i in batch_indices])
 
-                if result.get('success'):
+            for r in results:
+                if r.get('success'):
                     channels_sent += 1
-
-                    # Notify progress via WebSocket
                     await websocket_manager.send_to_user(user_id, {
                         'type': 'channel_broadcast_progress',
                         'message_id': scheduled_msg.id,
-                        'channel_name': channel_name,
+                        'channel_name': r.get('channel_name'),
                         'channels_sent': channels_sent,
                         'total_channels': len(channel_ids)
                     })
                 else:
                     channels_failed += 1
-                    error_msg = result.get('error', 'Unknown error')
-                    errors.append(f"{channel_name}: {error_msg}")
-
-            except Exception as e:
-                channels_failed += 1
-                errors.append(f"Channel {channel_id}: {str(e)}")
+                    errors.append(f"{r.get('channel_name')}: {r.get('error', 'Unknown error')}")
 
         # Update final status
-        scheduled_msg.groups_sent = channels_sent  # Reuse groups_sent for channels
+        scheduled_msg.groups_sent = channels_sent
         scheduled_msg.groups_failed = channels_failed
         scheduled_msg.sent_at = datetime.utcnow()
 
@@ -368,7 +361,6 @@ async def send_immediate_channel_broadcast(
         if errors:
             scheduled_msg.error_message = "; ".join(errors)
 
-        # Clean up media file on WhatsApp service after broadcast
         if has_media:
             try:
                 await whatsapp_bridge.delete_media(scheduled_msg.media_path)
@@ -377,7 +369,6 @@ async def send_immediate_channel_broadcast(
 
         db.commit()
 
-        # Notify completion via WebSocket
         await websocket_manager.send_to_user(user_id, {
             'type': 'channel_broadcast_complete',
             'message_id': scheduled_msg.id,
@@ -417,42 +408,38 @@ async def send_immediate_channel_poll(
         scheduled_msg.status = 'sending'
         db.commit()
 
-        for i, channel_id in enumerate(channel_ids):
-            # 30-second delay between channels (except first)
-            if i > 0:
-                await asyncio.sleep(30)
+        # Process in batches of 5
+        for batch_start in range(0, len(channel_ids), BROADCAST_BATCH_SIZE):
+            async def send_poll_to_channel(idx):
+                ch_id = channel_ids[idx]
+                ch_name = channel_names[idx] if idx < len(channel_names) else ch_id
+                try:
+                    result = await whatsapp_bridge.send_channel_poll(
+                        user_id=user_id, channel_id=ch_id,
+                        question=scheduled_msg.content,
+                        options=scheduled_msg.poll_options or [],
+                        allow_multiple_answers=scheduled_msg.poll_allow_multiple or False
+                    )
+                    return {'channel_name': ch_name, **result}
+                except Exception as e:
+                    return {'channel_name': ch_name, 'success': False, 'error': str(e)}
 
-            try:
-                channel_name = channel_names[i] if i < len(channel_names) else channel_id
+            batch_indices = list(range(batch_start, min(batch_start + BROADCAST_BATCH_SIZE, len(channel_ids))))
+            results = await asyncio.gather(*[send_poll_to_channel(i) for i in batch_indices])
 
-                # Send the poll to channel
-                result = await whatsapp_bridge.send_channel_poll(
-                    user_id=user_id,
-                    channel_id=channel_id,
-                    question=scheduled_msg.content,
-                    options=scheduled_msg.poll_options or [],
-                    allow_multiple_answers=scheduled_msg.poll_allow_multiple or False
-                )
-
-                if result.get('success'):
+            for r in results:
+                if r.get('success'):
                     channels_sent += 1
-
-                    # Notify progress via WebSocket
                     await websocket_manager.send_to_user(user_id, {
                         'type': 'channel_poll_progress',
                         'message_id': scheduled_msg.id,
-                        'channel_name': channel_name,
+                        'channel_name': r.get('channel_name'),
                         'channels_sent': channels_sent,
                         'total_channels': len(channel_ids)
                     })
                 else:
                     channels_failed += 1
-                    error_msg = result.get('error', 'Unknown error')
-                    errors.append(f"{channel_name}: {error_msg}")
-
-            except Exception as e:
-                channels_failed += 1
-                errors.append(f"Channel {channel_id}: {str(e)}")
+                    errors.append(f"{r.get('channel_name')}: {r.get('error', 'Unknown error')}")
 
         # Update final status
         scheduled_msg.groups_sent = channels_sent
@@ -471,7 +458,6 @@ async def send_immediate_channel_poll(
 
         db.commit()
 
-        # Notify completion via WebSocket
         await websocket_manager.send_to_user(user_id, {
             'type': 'channel_poll_complete',
             'message_id': scheduled_msg.id,
@@ -589,6 +575,10 @@ async def send_broadcast_with_media(
     import json
     import tempfile
     import shutil
+
+    # Block video files
+    if media.content_type and media.content_type.startswith('video/'):
+        raise HTTPException(status_code=400, detail="Video files are not supported in broadcasts")
 
     # Parse group_ids from JSON string
     try:
@@ -981,6 +971,10 @@ async def send_channel_broadcast_with_media(
     import json
     import tempfile
     import shutil
+
+    # Block video files
+    if media.content_type and media.content_type.startswith('video/'):
+        raise HTTPException(status_code=400, detail="Video files are not supported in broadcasts")
 
     # Parse channel_ids from JSON string
     try:

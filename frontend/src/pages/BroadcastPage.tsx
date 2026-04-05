@@ -272,6 +272,11 @@ export default function BroadcastPage() {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
+      if (file.type.startsWith('video/')) {
+        alert('Video files are not supported in broadcasts')
+        if (fileInputRef.current) fileInputRef.current.value = ''
+        return
+      }
       setSelectedMedia(file)
       if (file.type.startsWith('image/')) {
         const reader = new FileReader()
@@ -746,6 +751,11 @@ export default function BroadcastPage() {
   const handleChannelFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
+      if (file.type.startsWith('video/')) {
+        alert('Video files are not supported in broadcasts')
+        if (channelFileInputRef.current) channelFileInputRef.current.value = ''
+        return
+      }
       setChannelSelectedMedia(file)
       if (file.type.startsWith('image/')) {
         const reader = new FileReader()
@@ -920,7 +930,7 @@ export default function BroadcastPage() {
                 ref={fileInputRef}
                 type="file"
                 onChange={handleFileSelect}
-                accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar"
+                accept="image/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar"
                 className="hidden"
               />
 
@@ -1516,7 +1526,7 @@ export default function BroadcastPage() {
                       <input
                         ref={channelFileInputRef}
                         type="file"
-                        accept="image/*,video/*,application/*"
+                        accept="image/*,audio/*,application/*"
                         onChange={handleChannelFileSelect}
                         className="hidden"
                       />
