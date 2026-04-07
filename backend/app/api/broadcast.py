@@ -53,6 +53,19 @@ class SendChannelPollRequest(BaseModel):
     scheduled_at: Optional[datetime] = None  # If None, send immediately
 
 
+class SendEventRequest(BaseModel):
+    name: str
+    start_time: str  # ISO datetime string
+    end_time: Optional[str] = None
+    description: str = ''
+    location: str = ''
+    call_type: str = 'none'  # 'video', 'voice', 'none'
+    group_ids: List[int]
+    mention_type: str = 'none'
+    mention_ids: Optional[List[str]] = None
+    scheduled_at: Optional[datetime] = None
+
+
 class ScheduledMessageResponse(BaseModel):
     id: int
     content: str
@@ -706,6 +719,7 @@ def get_scheduled_messages(
             ScheduledMessage.task_type == 'poll',
             ScheduledMessage.task_type == 'channel_broadcast',
             ScheduledMessage.task_type == 'channel_poll',
+            ScheduledMessage.task_type == 'event',
             ScheduledMessage.task_type.is_(None)
         )
     ).order_by(ScheduledMessage.scheduled_at).all()
@@ -721,7 +735,8 @@ def get_scheduled_messages(
             "scheduled_at": msg.scheduled_at.isoformat() if msg.scheduled_at else None,
             "status": msg.status,
             "created_at": msg.created_at.isoformat() if msg.created_at else None,
-            "poll_options": msg.poll_options if msg.task_type in ['poll', 'channel_poll'] else None
+            "poll_options": msg.poll_options if msg.task_type in ['poll', 'channel_poll'] else None,
+            "event_data": msg.event_data if msg.task_type == 'event' else None
         }
         for msg in messages
     ]
@@ -744,6 +759,7 @@ def get_broadcast_history(
             ScheduledMessage.task_type == 'poll',
             ScheduledMessage.task_type == 'channel_broadcast',
             ScheduledMessage.task_type == 'channel_poll',
+            ScheduledMessage.task_type == 'event',
             ScheduledMessage.task_type.is_(None)
         )
     )
@@ -771,7 +787,8 @@ def get_broadcast_history(
                 "groups_failed": msg.groups_failed or 0,
                 "error_message": msg.error_message,
                 "created_at": msg.created_at.isoformat() if msg.created_at else None,
-                "poll_options": msg.poll_options if msg.task_type in ['poll', 'channel_poll'] else None
+                "poll_options": msg.poll_options if msg.task_type in ['poll', 'channel_poll'] else None,
+                "event_data": msg.event_data if msg.task_type == 'event' else None
             }
             for msg in messages
         ],
@@ -880,6 +897,208 @@ async def send_poll_broadcast(
     if not request.scheduled_at:
         background_tasks.add_task(
             send_immediate_poll,
+            current_user.id,
+            scheduled_msg,
+            db
+        )
+
+    return {
+        "success": True,
+        "message_id": scheduled_msg.id,
+        "scheduled": request.scheduled_at is not None,
+        "scheduled_at": scheduled_at.isoformat() if request.scheduled_at else None,
+        "groups": group_names
+    }
+
+
+# ==================== EVENT BROADCAST ====================
+
+
+async def send_immediate_event(
+    user_id: int,
+    scheduled_msg: ScheduledMessage,
+    db: Session
+):
+    """Send event immediately in batches of 5 groups"""
+    try:
+        group_ids = scheduled_msg.group_ids or []
+        groups_sent = 0
+        groups_failed = 0
+        errors = []
+        event_data = scheduled_msg.event_data or {}
+
+        # Mark as sending
+        scheduled_msg.status = 'sending'
+        db.commit()
+
+        # Batch-load all groups upfront
+        all_groups = db.query(MonitoredGroup).filter(
+            MonitoredGroup.id.in_(group_ids),
+            MonitoredGroup.user_id == user_id
+        ).all()
+        groups_map = {g.id: g for g in all_groups}
+
+        # Process in batches of 5
+        for batch_start in range(0, len(group_ids), BROADCAST_BATCH_SIZE):
+            batch = group_ids[batch_start:batch_start + BROADCAST_BATCH_SIZE]
+
+            async def send_event_to_group(gid):
+                group = groups_map.get(gid)
+                if not group:
+                    return {'group_id': gid, 'success': False, 'error': f'Group {gid} not found', 'group_name': None}
+                try:
+                    result = await whatsapp_bridge.send_event(
+                        user_id=user_id,
+                        group_id=group.whatsapp_group_id,
+                        name=event_data.get('name', ''),
+                        start_time=event_data.get('startTime', ''),
+                        description=event_data.get('description', ''),
+                        location=event_data.get('location', ''),
+                        call_type=event_data.get('callType', 'none'),
+                        end_time=event_data.get('endTime'),
+                        mention_all=(scheduled_msg.mention_type == 'all'),
+                        mention_ids=scheduled_msg.mention_ids if scheduled_msg.mention_type == 'selected' else None
+                    )
+                    return {'group_id': gid, 'group_name': group.group_name, **result}
+                except Exception as e:
+                    return {'group_id': gid, 'success': False, 'error': str(e), 'group_name': group.group_name}
+
+            results = await asyncio.gather(*[send_event_to_group(gid) for gid in batch])
+
+            for r in results:
+                if r.get('success'):
+                    groups_sent += 1
+                    await websocket_manager.send_to_user(user_id, {
+                        'type': 'event_progress',
+                        'message_id': scheduled_msg.id,
+                        'group_name': r.get('group_name'),
+                        'groups_sent': groups_sent,
+                        'total_groups': len(group_ids)
+                    })
+                else:
+                    groups_failed += 1
+                    name = r.get('group_name') or r.get('group_id')
+                    errors.append(f"{name}: {r.get('error', 'Unknown error')}")
+
+        # Update final status
+        scheduled_msg.groups_sent = groups_sent
+        scheduled_msg.groups_failed = groups_failed
+        scheduled_msg.sent_at = datetime.utcnow()
+
+        if groups_failed == 0:
+            scheduled_msg.status = 'sent'
+        elif groups_sent == 0:
+            scheduled_msg.status = 'failed'
+        else:
+            scheduled_msg.status = 'partially_sent'
+
+        if errors:
+            scheduled_msg.error_message = "; ".join(errors)
+
+        db.commit()
+
+        await websocket_manager.send_to_user(user_id, {
+            'type': 'event_complete',
+            'message_id': scheduled_msg.id,
+            'status': scheduled_msg.status,
+            'groups_sent': groups_sent,
+            'groups_failed': groups_failed,
+            'error_message': scheduled_msg.error_message
+        })
+
+    except Exception as e:
+        scheduled_msg.status = 'failed'
+        scheduled_msg.error_message = str(e)
+        db.commit()
+
+        await websocket_manager.send_to_user(user_id, {
+            'type': 'event_complete',
+            'message_id': scheduled_msg.id,
+            'status': 'failed',
+            'error_message': str(e)
+        })
+
+
+@router.post("/send-event")
+async def send_event_broadcast(
+    request: SendEventRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Send a scheduled event to multiple groups (immediate or scheduled)"""
+
+    if not request.name:
+        raise HTTPException(status_code=400, detail="Event name is required")
+
+    if not request.start_time:
+        raise HTTPException(status_code=400, detail="Event start time is required")
+
+    if request.call_type not in ['video', 'voice', 'none']:
+        raise HTTPException(status_code=400, detail="Invalid call_type. Must be 'video', 'voice', or 'none'")
+
+    if not request.group_ids:
+        raise HTTPException(status_code=400, detail="At least one group is required")
+
+    if request.mention_type not in ['none', 'all', 'selected']:
+        raise HTTPException(status_code=400, detail="Invalid mention_type")
+
+    if request.mention_type == 'selected' and not request.mention_ids:
+        raise HTTPException(status_code=400, detail="mention_ids required for 'selected' mention_type")
+
+    # Validate groups belong to user
+    groups = db.query(MonitoredGroup).filter(
+        MonitoredGroup.id.in_(request.group_ids),
+        MonitoredGroup.user_id == current_user.id,
+        MonitoredGroup.is_active == True
+    ).all()
+
+    if len(groups) != len(request.group_ids):
+        raise HTTPException(status_code=400, detail="One or more groups not found or not active")
+
+    group_names = [g.group_name for g in groups]
+
+    # Build event data
+    event_data = {
+        'name': request.name,
+        'startTime': request.start_time,
+        'endTime': request.end_time,
+        'description': request.description,
+        'location': request.location,
+        'callType': request.call_type
+    }
+
+    # Determine scheduled time
+    if request.scheduled_at:
+        scheduled_at = request.scheduled_at.replace(tzinfo=None) if request.scheduled_at.tzinfo else request.scheduled_at
+        if scheduled_at <= datetime.utcnow():
+            raise HTTPException(status_code=400, detail="Scheduled time must be in the future")
+        status = 'pending'
+    else:
+        scheduled_at = datetime.utcnow()
+        status = 'sending'
+
+    # Create scheduled message record
+    scheduled_msg = ScheduledMessage(
+        user_id=current_user.id,
+        task_type='event',
+        content=request.name,  # Store event name in content for display
+        event_data=event_data,
+        group_ids=request.group_ids,
+        group_names=group_names,
+        mention_type=request.mention_type,
+        mention_ids=request.mention_ids,
+        scheduled_at=scheduled_at,
+        status=status
+    )
+    db.add(scheduled_msg)
+    db.commit()
+    db.refresh(scheduled_msg)
+
+    # If immediate send, execute in background
+    if not request.scheduled_at:
+        background_tasks.add_task(
+            send_immediate_event,
             current_user.id,
             scheduled_msg,
             db

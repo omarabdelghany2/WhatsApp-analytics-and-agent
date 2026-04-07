@@ -27,6 +27,9 @@ class ScheduledMessage(Base):
     poll_options = Column(JSON)  # List of poll option strings
     poll_allow_multiple = Column(Boolean, default=False)  # Allow multiple answers
 
+    # Event-specific fields (for task_type='event')
+    event_data = Column(JSON)  # { name, startTime, endTime, description, location, callType }
+
     group_ids = Column(JSON)  # List of WhatsApp group IDs to send to (nullable for channel broadcasts)
     group_names = Column(JSON)  # List of group names for display
 

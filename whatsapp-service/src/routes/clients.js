@@ -261,6 +261,40 @@ module.exports = (clientManager) => {
         }
     });
 
+    // Send scheduled event to a group
+    router.post('/:userId/groups/:groupId/send-event', async (req, res) => {
+        try {
+            const userId = parseInt(req.params.userId);
+            const groupId = req.params.groupId;
+            const { name, startTime, endTime, description, location, callType, mentionAll, mentionIds } = req.body;
+
+            if (!name) {
+                return res.status(400).json({ success: false, error: 'Event name is required' });
+            }
+
+            if (!startTime) {
+                return res.status(400).json({ success: false, error: 'Event start time is required' });
+            }
+
+            const result = await clientManager.sendEvent(
+                userId,
+                groupId,
+                name,
+                startTime,
+                { description, location, callType, endTime },
+                {
+                    mentionAll: mentionAll || false,
+                    mentionIds: mentionIds || []
+                }
+            );
+
+            res.json(result);
+        } catch (error) {
+            console.error('Error sending event:', error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
     // ==================== CHANNEL ROUTES ====================
 
     // Get available channels

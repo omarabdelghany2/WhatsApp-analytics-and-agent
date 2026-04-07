@@ -718,6 +718,31 @@ class ApiClient {
     })
   }
 
+  // Event Broadcast
+  async sendEventBroadcast(data: {
+    name: string
+    start_time: string
+    end_time?: string
+    description?: string
+    location?: string
+    call_type?: 'video' | 'voice' | 'none'
+    group_ids: number[]
+    mention_type?: 'none' | 'all' | 'selected'
+    mention_ids?: string[]
+    scheduled_at?: string
+  }) {
+    return this.request<{
+      success: boolean
+      message_id?: number
+      scheduled?: boolean
+      scheduled_at?: string
+      groups?: string[]
+    }>('/api/broadcast/send-event', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  }
+
   // Channel Broadcast
   async getChannels() {
     return this.request<{
@@ -1037,10 +1062,11 @@ class ApiClient {
     })
   }
 
-  async uploadWelcomeImage(groupIds: number[], image: File) {
+  async uploadWelcomeImage(groupIds: number[], image: File, part?: string) {
     const formData = new FormData()
     formData.append('group_ids', groupIds.join(','))
     formData.append('image', image)
+    if (part) formData.append('part', part)
 
     const token = this.getToken()
     const response = await fetch(`${API_BASE_URL}/api/welcome/upload-image`, {
@@ -1059,8 +1085,9 @@ class ApiClient {
     return response.json()
   }
 
-  async deleteWelcomeImage(groupId: number) {
-    return this.request<{ success: boolean }>(`/api/welcome/${groupId}/image`, {
+  async deleteWelcomeImage(groupId: number, part?: string) {
+    const params = part ? `?part=${part}` : ''
+    return this.request<{ success: boolean }>(`/api/welcome/${groupId}/image${params}`, {
       method: 'DELETE',
     })
   }

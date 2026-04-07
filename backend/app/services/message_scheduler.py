@@ -147,6 +147,8 @@ class MessageScheduler:
                             await self._process_group_settings(db, task, admin_only=False)
                         elif task_type == 'close_group':
                             await self._process_group_settings(db, task, admin_only=True)
+                        elif task_type == 'event':
+                            await self._process_event(db, task)
                         else:
                             print(f"[SCHEDULER] Unknown task type: {task_type}", flush=True)
                     except Exception as e:
@@ -533,6 +535,116 @@ class MessageScheduler:
                 'type': 'settings_complete',
                 'task_id': task.id,
                 'action': action,
+                'status': 'failed',
+                'error_message': str(e)
+            })
+
+    async def _process_event(self, db: Session, scheduled_msg: ScheduledMessage):
+        """Send a scheduled event in batches of 5 groups"""
+        print(f"[SCHEDULER] Processing event {scheduled_msg.id} for user {scheduled_msg.user_id}", flush=True)
+
+        scheduled_msg.status = 'sending'
+        db.commit()
+
+        try:
+            group_ids = scheduled_msg.group_ids or []
+            groups_sent = 0
+            groups_failed = 0
+            errors = []
+            event_data = scheduled_msg.event_data or {}
+
+            if not await self._ensure_client_ready(scheduled_msg.user_id):
+                errors.append("WhatsApp client not ready - recovery failed")
+                groups_failed = len(group_ids)
+                print(f"[SCHEDULER] Aborting event - client not ready", flush=True)
+            else:
+                all_groups = db.query(MonitoredGroup).filter(
+                    MonitoredGroup.id.in_(group_ids),
+                    MonitoredGroup.user_id == scheduled_msg.user_id
+                ).all()
+                groups_map = {g.id: g for g in all_groups}
+
+                for batch_start in range(0, len(group_ids), self.BATCH_SIZE):
+                    batch = group_ids[batch_start:batch_start + self.BATCH_SIZE]
+
+                    async def send_event_to_group(gid):
+                        group = groups_map.get(gid)
+                        if not group:
+                            return {'group_id': gid, 'success': False, 'error': f'Group {gid} not found', 'group_name': None}
+                        try:
+                            result = await self._send_with_retry(
+                                lambda g=group: whatsapp_bridge.send_event(
+                                    user_id=scheduled_msg.user_id,
+                                    group_id=g.whatsapp_group_id,
+                                    name=event_data.get('name', ''),
+                                    start_time=event_data.get('startTime', ''),
+                                    description=event_data.get('description', ''),
+                                    location=event_data.get('location', ''),
+                                    call_type=event_data.get('callType', 'none'),
+                                    end_time=event_data.get('endTime'),
+                                    mention_all=(scheduled_msg.mention_type == 'all'),
+                                    mention_ids=scheduled_msg.mention_ids if scheduled_msg.mention_type == 'selected' else None
+                                )
+                            )
+                            return {'group_id': gid, 'group_name': group.group_name, **result}
+                        except Exception as e:
+                            return {'group_id': gid, 'success': False, 'error': str(e), 'group_name': group.group_name}
+
+                    results = await asyncio.gather(*[send_event_to_group(gid) for gid in batch])
+
+                    for r in results:
+                        if r.get('success'):
+                            groups_sent += 1
+                            print(f"[SCHEDULER] Successfully sent event to {r.get('group_name')}", flush=True)
+                            await websocket_manager.send_to_user(scheduled_msg.user_id, {
+                                'type': 'event_progress',
+                                'message_id': scheduled_msg.id,
+                                'group_name': r.get('group_name'),
+                                'groups_sent': groups_sent,
+                                'total_groups': len(group_ids)
+                            })
+                        else:
+                            groups_failed += 1
+                            name = r.get('group_name') or r.get('group_id')
+                            errors.append(f"{name}: {r.get('error', 'Unknown error')}")
+                            print(f"[SCHEDULER] Failed to send event to {name}: {r.get('error')}", flush=True)
+
+            scheduled_msg.groups_sent = groups_sent
+            scheduled_msg.groups_failed = groups_failed
+            scheduled_msg.sent_at = datetime.utcnow()
+
+            if groups_failed == 0:
+                scheduled_msg.status = 'sent'
+            elif groups_sent == 0:
+                scheduled_msg.status = 'failed'
+            else:
+                scheduled_msg.status = 'partially_sent'
+
+            if errors:
+                scheduled_msg.error_message = "; ".join(errors)
+
+            db.commit()
+
+            await websocket_manager.send_to_user(scheduled_msg.user_id, {
+                'type': 'event_complete',
+                'message_id': scheduled_msg.id,
+                'status': scheduled_msg.status,
+                'groups_sent': groups_sent,
+                'groups_failed': groups_failed,
+                'error_message': scheduled_msg.error_message
+            })
+
+            print(f"[SCHEDULER] Event {scheduled_msg.id} completed: {scheduled_msg.status}", flush=True)
+
+        except Exception as e:
+            print(f"[SCHEDULER] Fatal error processing event {scheduled_msg.id}: {e}", flush=True)
+            scheduled_msg.status = 'failed'
+            scheduled_msg.error_message = str(e)
+            db.commit()
+
+            await websocket_manager.send_to_user(scheduled_msg.user_id, {
+                'type': 'event_complete',
+                'message_id': scheduled_msg.id,
                 'status': 'failed',
                 'error_message': str(e)
             })

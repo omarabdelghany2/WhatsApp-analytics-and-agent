@@ -219,6 +219,42 @@ class WhatsAppBridge:
             except httpx.RequestError as e:
                 return {"success": False, "error": str(e)}
 
+    async def send_event(
+        self,
+        user_id: int,
+        group_id: str,
+        name: str,
+        start_time: str,
+        description: str = '',
+        location: str = '',
+        call_type: str = 'none',
+        end_time: Optional[str] = None,
+        mention_all: bool = False,
+        mention_ids: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """Send a scheduled event to a group"""
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    f"{self.base_url}/api/clients/{user_id}/groups/{group_id}/send-event",
+                    json={
+                        "name": name,
+                        "startTime": start_time,
+                        "endTime": end_time,
+                        "description": description,
+                        "location": location,
+                        "callType": call_type,
+                        "mentionAll": mention_all,
+                        "mentionIds": mention_ids or []
+                    },
+                    timeout=60.0
+                )
+                return response.json()
+            except httpx.ReadTimeout:
+                return {"success": False, "error": "Request timed out - WhatsApp service is busy"}
+            except httpx.RequestError as e:
+                return {"success": False, "error": str(e)}
+
     async def upload_media(self, file_path: str) -> Dict[str, Any]:
         """Upload media to WhatsApp service's persistent volume for scheduled broadcasts"""
         async with httpx.AsyncClient() as client:

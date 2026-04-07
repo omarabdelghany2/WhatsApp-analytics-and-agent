@@ -517,6 +517,31 @@ class RedisSubscriber:
                 else:
                     print(f"[WELCOME] Part 2 failed for {group.group_name}: {result2.get('error')}")
 
+            # Part 3: Optional Text + Image
+            if group.welcome_part3_enabled:
+                print(f"[WELCOME] Sending Part 3 to {group.group_name}")
+
+                if group.welcome_part3_image:
+                    result3 = await whatsapp_bridge.send_media_message(
+                        user_id=user_id,
+                        group_id=group.whatsapp_group_id,
+                        file_path=group.welcome_part3_image,
+                        caption=group.welcome_part3_text or ""
+                    )
+                elif group.welcome_part3_text:
+                    result3 = await whatsapp_bridge.send_message(
+                        user_id=user_id,
+                        group_id=group.whatsapp_group_id,
+                        content=group.welcome_part3_text
+                    )
+                else:
+                    result3 = {'success': True}
+
+                if result3.get('success'):
+                    print(f"[WELCOME] Part 3 sent successfully to {group.group_name}")
+                else:
+                    print(f"[WELCOME] Part 3 failed for {group.group_name}: {result3.get('error')}")
+
             # Notify via WebSocket
             await websocket_manager.send_to_user(user_id, {
                 "type": "welcome_sent",

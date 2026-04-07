@@ -30,6 +30,11 @@ class MonitoredGroup(Base):
     welcome_part2_text = Column(Text)
     welcome_part2_image = Column(String(500))  # Path to uploaded image
 
+    # Welcome Part 3 (optional): Text + Image
+    welcome_part3_enabled = Column(Boolean, default=False)
+    welcome_part3_text = Column(Text)
+    welcome_part3_image = Column(String(500))  # Path to uploaded image
+
     # Indexes and constraints
     __table_args__ = (
         Index('idx_monitored_group_user_active', 'user_id', 'is_active'),

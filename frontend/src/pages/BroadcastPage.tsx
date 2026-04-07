@@ -26,7 +26,7 @@ import {
 } from 'lucide-react'
 import { format } from 'date-fns'
 
-type Tab = 'compose' | 'poll' | 'channels' | 'scheduled' | 'history'
+type Tab = 'compose' | 'poll' | 'event' | 'channels' | 'scheduled' | 'history'
 type MentionType = 'none' | 'all' | 'selected'
 
 interface Group {
@@ -105,6 +105,27 @@ export default function BroadcastPage() {
   const [showPollProgressModal, setShowPollProgressModal] = useState(false)
   const [pollProgress, setPollProgress] = useState<{ group_name: string; groups_sent: number; total_groups: number } | null>(null)
   const [pollResult, setPollResult] = useState<{ groups_sent: number; groups_failed: number; error_message: string | null } | null>(null)
+
+  // Event state
+  const [eventName, setEventName] = useState('')
+  const [eventStartDate, setEventStartDate] = useState('')
+  const [eventStartTime, setEventStartTime] = useState('')
+  const [eventEndDate, setEventEndDate] = useState('')
+  const [eventEndTime, setEventEndTime] = useState('')
+  const [eventDescription, setEventDescription] = useState('')
+  const [eventLocation, setEventLocation] = useState('')
+  const [eventCallType, setEventCallType] = useState<'none' | 'video' | 'voice'>('none')
+  const [eventSelectedGroups, setEventSelectedGroups] = useState<Group[]>([])
+  const [eventGroupsExpanded, setEventGroupsExpanded] = useState(true)
+  const [eventMentionType, setEventMentionType] = useState<MentionType>('none')
+  const [eventSelectedMentionIds, setEventSelectedMentionIds] = useState<string[]>([])
+  const [eventScheduleMode, setEventScheduleMode] = useState(false)
+  const [eventScheduledDateTime, setEventScheduledDateTime] = useState('')
+
+  // Event progress state
+  const [showEventProgressModal, setShowEventProgressModal] = useState(false)
+  const [eventProgress, setEventProgress] = useState<{ group_name: string; groups_sent: number; total_groups: number } | null>(null)
+  const [eventResult, setEventResult] = useState<{ groups_sent: number; groups_failed: number; error_message: string | null } | null>(null)
 
   // Channel state
   const [channelMode, setChannelMode] = useState<'message' | 'poll'>('message')
@@ -341,6 +362,40 @@ export default function BroadcastPage() {
     },
   })
 
+  // Send event broadcast mutation
+  const sendEventMutation = useMutation({
+    mutationFn: (data: {
+      name: string
+      start_time: string
+      end_time?: string
+      description?: string
+      location?: string
+      call_type?: 'video' | 'voice' | 'none'
+      group_ids: number[]
+      mention_type?: 'none' | 'all' | 'selected'
+      mention_ids?: string[]
+      scheduled_at?: string
+    }) => api.sendEventBroadcast(data),
+    onSuccess: (result) => {
+      if (result.scheduled) {
+        resetEventForm()
+        refetchScheduled()
+        setActiveTab('scheduled')
+      } else {
+        setShowEventProgressModal(true)
+        setEventProgress(null)
+        setEventResult(null)
+      }
+    },
+    onError: (error) => {
+      setEventResult({
+        groups_sent: 0,
+        groups_failed: eventSelectedGroups.length,
+        error_message: (error as Error).message,
+      })
+    },
+  })
+
   // Send channel broadcast mutation (text only)
   const sendChannelBroadcastMutation = useMutation({
     mutationFn: (data: {
@@ -482,11 +537,25 @@ export default function BroadcastPage() {
       setChannelProgress(null)
     })
 
+    const unsubEventProgress = subscribe('event_progress', (data) => {
+      const progress = data as unknown as { group_name: string; groups_sent: number; total_groups: number }
+      setEventProgress(progress)
+    })
+
+    const unsubEventComplete = subscribe('event_complete', (data) => {
+      const result = data as unknown as { groups_sent: number; groups_failed: number; error_message: string | null }
+      setEventResult(result)
+      setEventProgress(null)
+      refetchHistory()
+    })
+
     return () => {
       unsubProgress()
       unsubComplete()
       unsubPollProgress()
       unsubPollComplete()
+      unsubEventProgress()
+      unsubEventComplete()
       unsubChannelProgress()
       unsubChannelComplete()
       unsubChannelPollProgress()
@@ -681,6 +750,82 @@ export default function BroadcastPage() {
     }
   }
 
+  // Event helper functions
+  const toggleEventGroup = (group: Group) => {
+    setEventSelectedGroups((prev) =>
+      prev.some((g) => g.id === group.id)
+        ? prev.filter((g) => g.id !== group.id)
+        : [...prev, group]
+    )
+  }
+
+  const selectAllEventGroups = () => {
+    if (groups) setEventSelectedGroups(groups)
+  }
+
+  const deselectAllEventGroups = () => {
+    setEventSelectedGroups([])
+  }
+
+  const resetEventForm = () => {
+    setEventName('')
+    setEventStartDate('')
+    setEventStartTime('')
+    setEventEndDate('')
+    setEventEndTime('')
+    setEventDescription('')
+    setEventLocation('')
+    setEventCallType('none')
+    setEventSelectedGroups([])
+    setEventMentionType('none')
+    setEventSelectedMentionIds([])
+    setEventScheduleMode(false)
+    setEventScheduledDateTime('')
+  }
+
+  const handleSendEvent = () => {
+    if (!eventName.trim() || !eventStartDate || !eventStartTime || eventSelectedGroups.length === 0) return
+
+    setShowEventProgressModal(true)
+    setEventProgress(null)
+    setEventResult(null)
+
+    const startDateTime = new Date(`${eventStartDate}T${eventStartTime}`).toISOString()
+    const endDateTime = eventEndDate && eventEndTime
+      ? new Date(`${eventEndDate}T${eventEndTime}`).toISOString()
+      : undefined
+
+    const data: Parameters<typeof api.sendEventBroadcast>[0] = {
+      name: eventName.trim(),
+      start_time: startDateTime,
+      end_time: endDateTime,
+      description: eventDescription.trim() || undefined,
+      location: eventLocation.trim() || undefined,
+      call_type: eventCallType,
+      group_ids: eventSelectedGroups.map((g) => g.id),
+      mention_type: eventMentionType,
+    }
+
+    if (eventMentionType === 'selected' && eventSelectedMentionIds.length > 0) {
+      data.mention_ids = eventSelectedMentionIds
+    }
+
+    if (eventScheduleMode && eventScheduledDateTime) {
+      data.scheduled_at = new Date(eventScheduledDateTime).toISOString()
+    }
+
+    sendEventMutation.mutate(data)
+  }
+
+  const handleEventProgressClose = () => {
+    setShowEventProgressModal(false)
+    setEventProgress(null)
+    setEventResult(null)
+    if (eventResult && eventResult.groups_sent > 0) {
+      resetEventForm()
+    }
+  }
+
   // Reset channel form
   const resetChannelForm = () => {
     setChannelMode('message')
@@ -853,6 +998,17 @@ export default function BroadcastPage() {
         >
           <BarChart2 size={16} className="inline mr-2" />
           Poll
+        </button>
+        <button
+          onClick={() => setActiveTab('event')}
+          className={`px-4 py-2 font-medium transition-colors ${
+            activeTab === 'event'
+              ? 'text-primary border-b-2 border-primary'
+              : 'text-muted hover:text-foreground'
+          }`}
+        >
+          <Calendar size={16} className="inline mr-2" />
+          Event
         </button>
         <button
           onClick={() => setActiveTab('channels')}
@@ -1460,6 +1616,273 @@ export default function BroadcastPage() {
         </div>
       )}
 
+      {/* Event Tab */}
+      {activeTab === 'event' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Event Form */}
+          <div className="lg:col-span-2 space-y-4">
+            {/* Event Name */}
+            <div className="bg-surface rounded-lg p-4">
+              <label className="block text-sm font-medium text-foreground-secondary mb-2">
+                Event Name *
+              </label>
+              <input
+                type="text"
+                value={eventName}
+                onChange={(e) => setEventName(e.target.value)}
+                placeholder="Enter event name..."
+                className="w-full px-4 py-3 bg-background border border-border rounded-lg text-foreground focus:ring-2 focus:ring-primary focus:border-transparent"
+              />
+            </div>
+
+            {/* Start Date & Time */}
+            <div className="bg-surface rounded-lg p-4">
+              <label className="block text-sm font-medium text-foreground-secondary mb-2">
+                Start Date & Time *
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <input
+                  type="date"
+                  value={eventStartDate}
+                  onChange={(e) => setEventStartDate(e.target.value)}
+                  className="px-4 py-3 bg-background border border-border rounded-lg text-foreground focus:ring-2 focus:ring-primary focus:border-transparent"
+                />
+                <input
+                  type="time"
+                  value={eventStartTime}
+                  onChange={(e) => setEventStartTime(e.target.value)}
+                  className="px-4 py-3 bg-background border border-border rounded-lg text-foreground focus:ring-2 focus:ring-primary focus:border-transparent"
+                />
+              </div>
+            </div>
+
+            {/* End Date & Time (Optional) */}
+            <div className="bg-surface rounded-lg p-4">
+              <label className="block text-sm font-medium text-foreground-secondary mb-2">
+                End Date & Time (Optional)
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <input
+                  type="date"
+                  value={eventEndDate}
+                  onChange={(e) => setEventEndDate(e.target.value)}
+                  className="px-4 py-3 bg-background border border-border rounded-lg text-foreground focus:ring-2 focus:ring-primary focus:border-transparent"
+                />
+                <input
+                  type="time"
+                  value={eventEndTime}
+                  onChange={(e) => setEventEndTime(e.target.value)}
+                  className="px-4 py-3 bg-background border border-border rounded-lg text-foreground focus:ring-2 focus:ring-primary focus:border-transparent"
+                />
+              </div>
+            </div>
+
+            {/* Description */}
+            <div className="bg-surface rounded-lg p-4">
+              <label className="block text-sm font-medium text-foreground-secondary mb-2">
+                Description (Optional)
+              </label>
+              <textarea
+                value={eventDescription}
+                onChange={(e) => setEventDescription(e.target.value)}
+                placeholder="Describe the event..."
+                rows={3}
+                className="w-full px-4 py-3 bg-background border border-border rounded-lg text-foreground focus:ring-2 focus:ring-primary focus:border-transparent resize-none"
+              />
+            </div>
+
+            {/* Location */}
+            <div className="bg-surface rounded-lg p-4">
+              <label className="block text-sm font-medium text-foreground-secondary mb-2">
+                Location (Optional)
+              </label>
+              <input
+                type="text"
+                value={eventLocation}
+                onChange={(e) => setEventLocation(e.target.value)}
+                placeholder="Enter location..."
+                className="w-full px-4 py-3 bg-background border border-border rounded-lg text-foreground focus:ring-2 focus:ring-primary focus:border-transparent"
+              />
+            </div>
+
+            {/* Call Type */}
+            <div className="bg-surface rounded-lg p-4">
+              <label className="block text-sm font-medium text-foreground-secondary mb-2">
+                Call Link
+              </label>
+              <div className="flex gap-3">
+                {(['none', 'video', 'voice'] as const).map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => setEventCallType(type)}
+                    className={`px-4 py-2 rounded-lg border transition-colors ${
+                      eventCallType === type
+                        ? 'bg-primary text-white border-primary'
+                        : 'bg-background border-border text-foreground hover:bg-surface'
+                    }`}
+                  >
+                    {type === 'none' ? 'No Call' : type === 'video' ? 'Video Call' : 'Voice Call'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Schedule Option */}
+            <div className="bg-surface rounded-lg p-4">
+              <div className="flex items-center justify-between mb-3">
+                <label className="text-sm font-medium text-foreground-secondary">
+                  Schedule for later
+                </label>
+                <button
+                  onClick={() => setEventScheduleMode(!eventScheduleMode)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                    eventScheduleMode ? 'bg-primary' : 'bg-border'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      eventScheduleMode ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+              {eventScheduleMode && (
+                <input
+                  type="datetime-local"
+                  value={eventScheduledDateTime}
+                  onChange={(e) => setEventScheduledDateTime(e.target.value)}
+                  min={new Date().toISOString().slice(0, 16)}
+                  className="w-full px-4 py-3 bg-background border border-border rounded-lg text-foreground focus:ring-2 focus:ring-primary focus:border-transparent"
+                />
+              )}
+            </div>
+
+            {/* Send Button */}
+            <button
+              onClick={handleSendEvent}
+              disabled={
+                !eventName.trim() ||
+                !eventStartDate ||
+                !eventStartTime ||
+                eventSelectedGroups.length === 0 ||
+                sendEventMutation.isPending
+              }
+              className="w-full py-3 bg-primary text-white rounded-lg hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+            >
+              {sendEventMutation.isPending ? (
+                <Loader2 size={20} className="animate-spin" />
+              ) : eventScheduleMode ? (
+                <Clock size={20} />
+              ) : (
+                <Send size={20} />
+              )}
+              {eventScheduleMode ? 'Schedule Event' : 'Send Event Now'}
+            </button>
+          </div>
+
+          {/* Group Selection */}
+          <div className="space-y-4">
+            <div className="bg-surface rounded-lg p-4">
+              <div
+                className="flex items-center justify-between cursor-pointer"
+                onClick={() => setEventGroupsExpanded(!eventGroupsExpanded)}
+              >
+                <label className="text-sm font-medium text-foreground-secondary">
+                  Select Groups ({eventSelectedGroups.length} selected)
+                </label>
+                {eventGroupsExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </div>
+
+              {eventGroupsExpanded && (
+                <>
+                  <div className="flex gap-2 mt-3 mb-2">
+                    <button
+                      onClick={selectAllEventGroups}
+                      className="text-xs px-2 py-1 bg-primary/20 text-primary rounded hover:bg-primary/30"
+                    >
+                      Select All
+                    </button>
+                    <button
+                      onClick={deselectAllEventGroups}
+                      className="text-xs px-2 py-1 bg-error/20 text-error rounded hover:bg-error/30"
+                    >
+                      Deselect All
+                    </button>
+                  </div>
+                  <div className="space-y-2 max-h-96 overflow-y-auto">
+                    {groups?.map((group) => (
+                      <button
+                        key={group.id}
+                        onClick={() => toggleEventGroup(group)}
+                        className={`w-full flex items-center gap-3 p-2 rounded-lg transition-colors ${
+                          eventSelectedGroups.some((g) => g.id === group.id)
+                            ? 'bg-primary/20 border border-primary/50'
+                            : 'bg-background hover:bg-surface border border-transparent'
+                        }`}
+                      >
+                        {eventSelectedGroups.some((g) => g.id === group.id) ? (
+                          <CheckSquare size={16} className="text-primary flex-shrink-0" />
+                        ) : (
+                          <Square size={16} className="text-muted flex-shrink-0" />
+                        )}
+                        <div className="text-left flex-1 min-w-0">
+                          <p className="text-sm font-medium text-foreground truncate">{group.group_name}</p>
+                          <p className="text-xs text-muted">{group.member_count} members</p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Event Progress Modal */}
+      {showEventProgressModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-surface rounded-xl p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold text-foreground mb-4">
+              {eventResult ? 'Event Broadcast Complete' : 'Sending Event...'}
+            </h3>
+            {eventResult ? (
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  {eventResult.groups_failed === 0 ? (
+                    <Check size={24} className="text-green-500" />
+                  ) : (
+                    <AlertCircle size={24} className="text-yellow-500" />
+                  )}
+                  <p className="text-foreground">
+                    Sent to {eventResult.groups_sent} group{eventResult.groups_sent !== 1 ? 's' : ''}
+                    {eventResult.groups_failed > 0 && `, ${eventResult.groups_failed} failed`}
+                  </p>
+                </div>
+                {eventResult.error_message && (
+                  <p className="text-sm text-error mb-3">{eventResult.error_message}</p>
+                )}
+                <button
+                  onClick={handleEventProgressClose}
+                  className="px-6 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            ) : (
+              <div className="text-center">
+                <Loader2 size={32} className="animate-spin mx-auto mb-3 text-primary" />
+                {eventProgress && (
+                  <p className="text-foreground-secondary">
+                    Sent to {eventProgress.group_name} ({eventProgress.groups_sent}/{eventProgress.total_groups})
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Channels Tab */}
       {activeTab === 'channels' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1913,6 +2336,10 @@ export default function BroadcastPage() {
                       <span className="px-2 py-0.5 bg-green-500/20 text-green-400 rounded text-xs font-medium">
                         Channel
                       </span>
+                    ) : msg.task_type === 'event' ? (
+                      <span className="px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded text-xs font-medium">
+                        Event
+                      </span>
                     ) : (
                       <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs font-medium">
                         Broadcast
@@ -1923,7 +2350,7 @@ export default function BroadcastPage() {
                     </span>
                   </div>
                   <p className="text-foreground mb-2">
-                    {(msg.task_type === 'poll' || msg.task_type === 'channel_poll') ? `📊 ${msg.content}` : msg.content}
+                    {msg.task_type === 'event' ? `📅 ${msg.content}` : (msg.task_type === 'poll' || msg.task_type === 'channel_poll') ? `📊 ${msg.content}` : msg.content}
                   </p>
                   {msg.poll_options && (
                     <div className="mb-2 space-y-1">
@@ -2006,6 +2433,10 @@ export default function BroadcastPage() {
                       <span className="px-2 py-0.5 bg-green-500/20 text-green-400 rounded text-xs font-medium">
                         Channel
                       </span>
+                    ) : broadcast.task_type === 'event' ? (
+                      <span className="px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded text-xs font-medium">
+                        Event
+                      </span>
                     ) : (
                       <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs font-medium">
                         Broadcast
@@ -2024,7 +2455,7 @@ export default function BroadcastPage() {
                   </div>
                 </div>
                 <p className="text-foreground mb-3">
-                  {(broadcast.task_type === 'poll' || broadcast.task_type === 'channel_poll') ? `📊 ${broadcast.content}` : broadcast.content}
+                  {broadcast.task_type === 'event' ? `📅 ${broadcast.content}` : (broadcast.task_type === 'poll' || broadcast.task_type === 'channel_poll') ? `📊 ${broadcast.content}` : broadcast.content}
                 </p>
                 {broadcast.poll_options && (
                   <div className="mb-3 space-y-1">

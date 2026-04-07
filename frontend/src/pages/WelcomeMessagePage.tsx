@@ -42,6 +42,9 @@ interface WelcomeGroup {
   welcome_part2_enabled: boolean
   welcome_part2_text: string | null
   welcome_part2_image: string | null
+  welcome_part3_enabled: boolean
+  welcome_part3_text: string | null
+  welcome_part3_image: string | null
 }
 
 export default function WelcomeMessagePage() {
@@ -61,8 +64,13 @@ export default function WelcomeMessagePage() {
   const [part2Text, setPart2Text] = useState('')
   const [selectedImage, setSelectedImage] = useState<File | null>(null)
   const [existingImagePath, setExistingImagePath] = useState<string | null>(null)
+  const [part3Enabled, setPart3Enabled] = useState(false)
+  const [part3Text, setPart3Text] = useState('')
+  const [selectedImage3, setSelectedImage3] = useState<File | null>(null)
+  const [existingImagePath3, setExistingImagePath3] = useState<string | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const fileInputRef3 = useRef<HTMLInputElement>(null)
 
   // Fetch welcome settings - must be declared first as other hooks depend on it
   const { data: welcomeData, isLoading, refetch } = useQuery({
@@ -146,8 +154,8 @@ export default function WelcomeMessagePage() {
 
   // Upload image mutation
   const uploadImageMutation = useMutation({
-    mutationFn: ({ groupIds, image }: { groupIds: number[]; image: File }) =>
-      api.uploadWelcomeImage(groupIds, image),
+    mutationFn: ({ groupIds, image, part }: { groupIds: number[]; image: File; part?: string }) =>
+      api.uploadWelcomeImage(groupIds, image, part),
     onSuccess: () => {
       refetch()
     },
@@ -163,7 +171,7 @@ export default function WelcomeMessagePage() {
 
   // Delete image mutation
   const deleteImageMutation = useMutation({
-    mutationFn: (groupId: number) => api.deleteWelcomeImage(groupId),
+    mutationFn: ({ groupId, part }: { groupId: number; part?: string }) => api.deleteWelcomeImage(groupId, part),
     onSuccess: () => {
       refetch()
     },
@@ -188,6 +196,10 @@ export default function WelcomeMessagePage() {
     setPart2Text('')
     setSelectedImage(null)
     setExistingImagePath(null)
+    setPart3Enabled(false)
+    setPart3Text('')
+    setSelectedImage3(null)
+    setExistingImagePath3(null)
   }
 
   // Edit a specific group - pre-populate form with its settings
@@ -200,7 +212,11 @@ export default function WelcomeMessagePage() {
     setPart2Enabled(group.welcome_part2_enabled || false)
     setPart2Text(group.welcome_part2_text || '')
     setSelectedImage(null)
-    setExistingImagePath(group.welcome_part2_image || null) // Track existing image
+    setExistingImagePath(group.welcome_part2_image || null)
+    setPart3Enabled(group.welcome_part3_enabled || false)
+    setPart3Text(group.welcome_part3_text || '')
+    setSelectedImage3(null)
+    setExistingImagePath3(group.welcome_part3_image || null)
     setShowConfigModal(true)
   }
 
@@ -244,13 +260,24 @@ export default function WelcomeMessagePage() {
       extra_mentions: selectedMemberPhones.length > 0 ? selectedMemberPhones : undefined,
       part2_enabled: part2Enabled,
       part2_text: part2Text || undefined,
+      part3_enabled: part3Enabled,
+      part3_text: part3Text || undefined,
     })
 
-    // Upload image if selected
+    // Upload Part 2 image if selected
     if (selectedImage && selectedGroups.length > 0) {
       await uploadImageMutation.mutateAsync({
         groupIds: selectedGroups,
         image: selectedImage,
+      })
+    }
+
+    // Upload Part 3 image if selected
+    if (selectedImage3 && selectedGroups.length > 0) {
+      await uploadImageMutation.mutateAsync({
+        groupIds: selectedGroups,
+        image: selectedImage3,
+        part: '3',
       })
     }
   }
@@ -384,7 +411,7 @@ export default function WelcomeMessagePage() {
                   )}
                   {group.welcome_part2_image && (
                     <button
-                      onClick={() => deleteImageMutation.mutate(group.id)}
+                      onClick={() => deleteImageMutation.mutate({ groupId: group.id })}
                       disabled={deleteImageMutation.isPending}
                       className="p-1.5 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 transition-colors"
                       title="Delete welcome image"
@@ -422,7 +449,7 @@ export default function WelcomeMessagePage() {
                       </p>
                     </div>
                     <div className="p-2 bg-surface-secondary/50 rounded-lg">
-                      <p className="text-xs text-muted">Image</p>
+                      <p className="text-xs text-muted">P2 Image</p>
                       <p className="text-foreground font-medium flex items-center gap-1">
                         {group.welcome_part2_image ? (
                           <>
@@ -432,6 +459,12 @@ export default function WelcomeMessagePage() {
                         ) : (
                           'None'
                         )}
+                      </p>
+                    </div>
+                    <div className="p-2 bg-surface-secondary/50 rounded-lg">
+                      <p className="text-xs text-muted">Part 3</p>
+                      <p className="text-foreground font-medium">
+                        {group.welcome_part3_enabled ? 'Enabled' : 'Disabled'}
                       </p>
                     </div>
                   </div>
@@ -449,6 +482,14 @@ export default function WelcomeMessagePage() {
                     <div className="mt-2 p-3 bg-surface-secondary/30 rounded-lg">
                       <p className="text-xs text-muted mb-1">Part 2 Text</p>
                       <p className="text-foreground-secondary text-sm">{group.welcome_part2_text}</p>
+                    </div>
+                  )}
+
+                  {/* Part 3 Text Preview */}
+                  {group.welcome_part3_enabled && group.welcome_part3_text && (
+                    <div className="mt-2 p-3 bg-surface-secondary/30 rounded-lg">
+                      <p className="text-xs text-muted mb-1">Part 3 Text</p>
+                      <p className="text-foreground-secondary text-sm">{group.welcome_part3_text}</p>
                     </div>
                   )}
                 </>
@@ -672,7 +713,7 @@ export default function WelcomeMessagePage() {
                             <button
                               onClick={async () => {
                                 if (selectedGroups.length === 1) {
-                                  await deleteImageMutation.mutateAsync(selectedGroups[0])
+                                  await deleteImageMutation.mutateAsync({ groupId: selectedGroups[0] })
                                 }
                                 setExistingImagePath(null)
                               }}
@@ -715,6 +756,115 @@ export default function WelcomeMessagePage() {
                         {selectedImage && (
                           <button
                             onClick={() => setSelectedImage(null)}
+                            className="mt-2 text-sm text-red-400 hover:text-red-300"
+                          >
+                            Remove selected image
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  {/* Part 3 Toggle */}
+                  <div className="bg-surface-secondary/50 rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="font-medium text-foreground">Enable Part 3</h3>
+                        <p className="text-sm text-muted">
+                          Send a third message with text and/or image
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => setPart3Enabled(!part3Enabled)}
+                        className={`w-14 h-8 rounded-full transition-colors ${
+                          part3Enabled ? 'bg-green-500' : 'bg-surface-secondary'
+                        }`}
+                      >
+                        <div
+                          className={`w-6 h-6 bg-white rounded-full transition-transform mx-1 ${
+                            part3Enabled ? 'translate-x-6' : 'translate-x-0'
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  </div>
+
+                  {part3Enabled && (
+                    <>
+                      {/* Part 3: Text */}
+                      <div>
+                        <label className="block text-sm font-medium text-foreground-secondary mb-2">
+                          Part 3: Text (Optional)
+                        </label>
+                        <textarea
+                          value={part3Text}
+                          onChange={(e) => setPart3Text(e.target.value)}
+                          placeholder="Additional information..."
+                          className="w-full h-20 px-4 py-3 bg-surface-secondary border border-border rounded-lg text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary resize-none"
+                        />
+                      </div>
+
+                      {/* Part 3: Image */}
+                      <div>
+                        <label className="block text-sm font-medium text-foreground-secondary mb-2">
+                          Part 3: Image (Optional)
+                        </label>
+
+                        {existingImagePath3 && !selectedImage3 && (
+                          <div className="mb-3 p-3 bg-green-500/10 border border-green-500/30 rounded-lg flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <ImageIcon size={20} className="text-green-400" />
+                              <span className="text-sm text-green-400">Image already saved</span>
+                            </div>
+                            <button
+                              onClick={async () => {
+                                if (selectedGroups.length === 1) {
+                                  await deleteImageMutation.mutateAsync({ groupId: selectedGroups[0], part: '3' })
+                                }
+                                setExistingImagePath3(null)
+                              }}
+                              disabled={deleteImageMutation.isPending}
+                              className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50"
+                            >
+                              {deleteImageMutation.isPending ? 'Removing...' : 'Remove'}
+                            </button>
+                          </div>
+                        )}
+
+                        <input
+                          type="file"
+                          ref={fileInputRef3}
+                          accept="image/*"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0]
+                            if (file) setSelectedImage3(file)
+                          }}
+                          className="hidden"
+                        />
+                        <button
+                          onClick={() => fileInputRef3.current?.click()}
+                          className="w-full py-4 bg-surface-secondary border-2 border-dashed border-border rounded-lg hover:border-primary transition-colors flex items-center justify-center gap-2 text-foreground-secondary hover:text-foreground"
+                        >
+                          {selectedImage3 ? (
+                            <>
+                              <Check size={20} className="text-green-400" />
+                              {selectedImage3.name}
+                            </>
+                          ) : existingImagePath3 ? (
+                            <>
+                              <Upload size={20} />
+                              Replace Image
+                            </>
+                          ) : (
+                            <>
+                              <Upload size={20} />
+                              Select Image
+                            </>
+                          )}
+                        </button>
+                        {selectedImage3 && (
+                          <button
+                            onClick={() => setSelectedImage3(null)}
                             className="mt-2 text-sm text-red-400 hover:text-red-300"
                           >
                             Remove selected image

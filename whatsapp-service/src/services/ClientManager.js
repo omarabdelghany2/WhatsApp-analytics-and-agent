@@ -1,4 +1,4 @@
-const { Client, LocalAuth, MessageMedia, Poll } = require('whatsapp-web.js');
+const { Client, LocalAuth, MessageMedia, Poll, ScheduledEvent } = require('whatsapp-web.js');
 const path = require('path');
 const fs = require('fs');
 const mime = require('mime-types');
@@ -1091,6 +1091,87 @@ class ClientManager {
                 };
             } catch (error) {
                 console.error(`Error sending poll to group ${groupId} for user ${userId}:`, error.message);
+
+                if (error.message && (error.message.includes('detached Frame') || error.message.includes('timed out'))) {
+                    if (error.message.includes('detached Frame')) {
+                        this.clientStatus.set(userId, 'disconnected');
+                    }
+                }
+
+                throw error;
+            }
+        });
+    }
+
+    // ==================== SCHEDULED EVENT METHODS ====================
+
+    async sendEvent(userId, groupId, name, startTime, options = {}, mentionOptions = {}) {
+        const client = this.clients.get(userId);
+        if (!client || this.clientStatus.get(userId) !== 'ready') {
+            throw new Error('Client not ready');
+        }
+
+        if (!name) {
+            throw new Error('Event name is required');
+        }
+
+        if (!startTime) {
+            throw new Error('Event start time is required');
+        }
+
+        // Use operation queue to prevent concurrent calls
+        return this._queueOperation(userId, async () => {
+            try {
+                // Build mentions array if provided
+                let mentions = [];
+
+                if (mentionOptions.mentionAll || mentionOptions.mentionIds?.length > 0) {
+                    const chat = await client.getChatById(groupId);
+                    if (chat) {
+                        if (mentionOptions.mentionAll) {
+                            if (chat.participants && Array.isArray(chat.participants)) {
+                                mentions = chat.participants.map(p => p.id._serialized);
+                            }
+                        } else if (mentionOptions.mentionIds && mentionOptions.mentionIds.length > 0) {
+                            mentions = mentionOptions.mentionIds.map(phone => {
+                                if (phone.includes('@')) {
+                                    return phone;
+                                }
+                                return `${phone}@c.us`;
+                            });
+                        }
+                    }
+                }
+
+                // Build event options
+                const eventOptions = {};
+                if (options.description) eventOptions.description = options.description;
+                if (options.location) eventOptions.location = options.location;
+                if (options.callType && options.callType !== 'none') eventOptions.callType = options.callType;
+                if (options.endTime) eventOptions.endTime = new Date(options.endTime);
+
+                // Create the ScheduledEvent
+                const event = new ScheduledEvent(name, new Date(startTime), eventOptions);
+
+                // Send with options
+                const sendOptions = {
+                    sendSeen: false,
+                    ...(mentions.length > 0 ? { mentions } : {})
+                };
+
+                console.log(`[EVENT] Sending event "${name}" to ${groupId} for user ${userId}`);
+
+                const result = await client.sendMessage(groupId, event, sendOptions);
+
+                return {
+                    success: true,
+                    messageId: result.id._serialized,
+                    timestamp: result.timestamp,
+                    groupId: groupId,
+                    eventName: name
+                };
+            } catch (error) {
+                console.error(`Error sending event to group ${groupId} for user ${userId}:`, error.message);
 
                 if (error.message && (error.message.includes('detached Frame') || error.message.includes('timed out'))) {
                     if (error.message.includes('detached Frame')) {
