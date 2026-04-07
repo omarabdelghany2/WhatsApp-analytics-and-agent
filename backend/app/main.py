@@ -18,9 +18,10 @@ from app.models.user import User
 
 
 def run_migrations():
-    """Run Alembic migrations on startup"""
+    """Run Alembic migrations on startup, with fallback to ensure columns exist"""
     from alembic.config import Config
     from alembic import command
+    from sqlalchemy import text, inspect
 
     # Get the directory where alembic.ini is located
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -39,6 +40,49 @@ def run_migrations():
     else:
         # No alembic.ini, use create_all
         Base.metadata.create_all(bind=engine)
+
+    # Ensure all required columns exist (self-healing for failed migrations)
+    try:
+        with engine.connect() as conn:
+            inspector = inspect(engine)
+
+            # Check and add missing columns on scheduled_messages
+            if inspector.has_table('scheduled_messages'):
+                sm_cols = {c['name'] for c in inspector.get_columns('scheduled_messages')}
+                if 'event_data' not in sm_cols:
+                    conn.execute(text("ALTER TABLE scheduled_messages ADD COLUMN event_data JSON"))
+                    print("[Startup] Added missing column: scheduled_messages.event_data")
+
+            # Check and add missing columns on monitored_groups
+            if inspector.has_table('monitored_groups'):
+                mg_cols = {c['name'] for c in inspector.get_columns('monitored_groups')}
+                if 'welcome_part3_enabled' not in mg_cols:
+                    conn.execute(text("ALTER TABLE monitored_groups ADD COLUMN welcome_part3_enabled BOOLEAN DEFAULT false"))
+                    print("[Startup] Added missing column: monitored_groups.welcome_part3_enabled")
+                if 'welcome_part3_text' not in mg_cols:
+                    conn.execute(text("ALTER TABLE monitored_groups ADD COLUMN welcome_part3_text TEXT"))
+                    print("[Startup] Added missing column: monitored_groups.welcome_part3_text")
+                if 'welcome_part3_image' not in mg_cols:
+                    conn.execute(text("ALTER TABLE monitored_groups ADD COLUMN welcome_part3_image VARCHAR(500)"))
+                    print("[Startup] Added missing column: monitored_groups.welcome_part3_image")
+
+            conn.commit()
+
+            # Stamp alembic version if table doesn't exist or is empty
+            if not inspector.has_table('alembic_version'):
+                conn.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)"))
+                conn.execute(text("INSERT INTO alembic_version (version_num) VALUES ('005_add_welcome_part3')"))
+                conn.commit()
+                print("[Startup] Created alembic_version table and stamped to 005")
+            else:
+                result = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
+                if not result:
+                    conn.execute(text("INSERT INTO alembic_version (version_num) VALUES ('005_add_welcome_part3')"))
+                    conn.commit()
+                    print("[Startup] Stamped alembic_version to 005")
+
+    except Exception as e:
+        print(f"[Startup] Column check error (non-fatal): {e}")
 
 
 @asynccontextmanager
