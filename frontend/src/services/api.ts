@@ -998,6 +998,9 @@ class ApiClient {
         welcome_part2_enabled: boolean
         welcome_part2_text: string | null
         welcome_part2_image: string | null
+        welcome_part3_enabled: boolean
+        welcome_part3_text: string | null
+        welcome_part3_image: string | null
       }>
     }>('/api/welcome')
   }
@@ -1025,6 +1028,8 @@ class ApiClient {
     text?: string
     part2_enabled?: boolean
     part2_text?: string
+    part3_enabled?: boolean
+    part3_text?: string
   }) {
     return this.request<{
       success: boolean
@@ -1044,6 +1049,8 @@ class ApiClient {
       text?: string
       part2_enabled?: boolean
       part2_text?: string
+      part3_enabled?: boolean
+      part3_text?: string
     }
   ) {
     const searchParams = new URLSearchParams()
@@ -1052,6 +1059,8 @@ class ApiClient {
     if (data.text !== undefined) searchParams.append('text', data.text)
     if (data.part2_enabled !== undefined) searchParams.append('part2_enabled', String(data.part2_enabled))
     if (data.part2_text !== undefined) searchParams.append('part2_text', data.part2_text)
+    if (data.part3_enabled !== undefined) searchParams.append('part3_enabled', String(data.part3_enabled))
+    if (data.part3_text !== undefined) searchParams.append('part3_text', data.part3_text)
 
     return this.request<{
       success: boolean

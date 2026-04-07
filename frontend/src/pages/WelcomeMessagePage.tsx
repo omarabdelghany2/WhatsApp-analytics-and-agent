@@ -144,6 +144,8 @@ export default function WelcomeMessagePage() {
       extra_mentions?: string[]
       part2_enabled?: boolean
       part2_text?: string
+      part3_enabled?: boolean
+      part3_text?: string
     }) => api.updateWelcomeSettingsBulk(data),
     onSuccess: () => {
       setShowConfigModal(false)
