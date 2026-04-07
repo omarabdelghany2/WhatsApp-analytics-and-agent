@@ -59,25 +59,34 @@ class RedisSubscriber:
             await self.redis.close()
 
     def _get_monitored_group(self, db: Session, user_id: int, wa_group_id: str):
-        """Get monitored group from cache or DB. Returns MonitoredGroup or None."""
+        """Get monitored group from cache or DB. Returns MonitoredGroup or None.
+        Cache stores group IDs only to avoid detached session errors."""
         import time
         now = time.time()
         cached = self._monitored_cache.get(user_id)
 
         if cached and now < cached['expires']:
-            return cached['groups'].get(wa_group_id)
+            group_id = cached['groups'].get(wa_group_id)
+            if group_id is None:
+                return None
+            # Re-query using the cached ID (bound to current session)
+            return db.query(MonitoredGroup).filter(MonitoredGroup.id == group_id).first()
 
         # Cache miss or expired — refresh from DB
         groups = db.query(MonitoredGroup).filter(
             MonitoredGroup.user_id == user_id,
             MonitoredGroup.is_active == True
         ).all()
-        groups_map = {g.whatsapp_group_id: g for g in groups}
+        # Cache only whatsapp_group_id -> db_id mapping (not SQLAlchemy objects)
+        groups_map = {g.whatsapp_group_id: g.id for g in groups}
         self._monitored_cache[user_id] = {
             'groups': groups_map,
             'expires': now + self._CACHE_TTL
         }
-        return groups_map.get(wa_group_id)
+        group_id = groups_map.get(wa_group_id)
+        if group_id is None:
+            return None
+        return db.query(MonitoredGroup).filter(MonitoredGroup.id == group_id).first()
 
     def _invalidate_monitored_cache(self, user_id: int):
         """Invalidate the monitored groups cache for a user."""
