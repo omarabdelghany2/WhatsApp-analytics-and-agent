@@ -995,6 +995,7 @@ class ApiClient {
         welcome_join_count: number
         welcome_text: string | null
         welcome_extra_mentions?: string[] | null
+        welcome_part1_image: string | null
         welcome_part2_enabled: boolean
         welcome_part2_text: string | null
         welcome_part2_image: string | null
@@ -1015,6 +1016,7 @@ class ApiClient {
       welcome_join_count: number
       welcome_pending_joiners: string[]
       welcome_text: string | null
+      welcome_part1_image: string | null
       welcome_part2_enabled: boolean
       welcome_part2_text: string | null
       welcome_part2_image: string | null
