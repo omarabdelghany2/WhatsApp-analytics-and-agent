@@ -47,6 +47,9 @@ def run_migrations():
                 if 'welcome_part3_image' not in mg_cols:
                     conn.execute(text("ALTER TABLE monitored_groups ADD COLUMN welcome_part3_image VARCHAR(500)"))
                     print("[Startup] Added missing column: monitored_groups.welcome_part3_image")
+                if 'welcome_part1_image' not in mg_cols:
+                    conn.execute(text("ALTER TABLE monitored_groups ADD COLUMN welcome_part1_image VARCHAR(500)"))
+                    print("[Startup] Added missing column: monitored_groups.welcome_part1_image")
 
             conn.commit()
 

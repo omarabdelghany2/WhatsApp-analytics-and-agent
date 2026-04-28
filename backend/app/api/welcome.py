@@ -40,6 +40,7 @@ class WelcomeSettingsResponse(BaseModel):
     welcome_threshold: int
     welcome_join_count: int
     welcome_text: Optional[str]
+    welcome_part1_image: Optional[str]
     welcome_part2_enabled: bool
     welcome_part2_text: Optional[str]
     welcome_part2_image: Optional[str]
@@ -70,6 +71,7 @@ def get_all_welcome_settings(
                 "welcome_join_count": g.welcome_join_count or 0,
                 "welcome_text": g.welcome_text,
                 "welcome_extra_mentions": g.welcome_extra_mentions or [],
+                "welcome_part1_image": g.welcome_part1_image,
                 "welcome_part2_enabled": g.welcome_part2_enabled or False,
                 "welcome_part2_text": g.welcome_part2_text,
                 "welcome_part2_image": g.welcome_part2_image,
@@ -107,6 +109,7 @@ def get_welcome_settings(
         "welcome_pending_joiners": group.welcome_pending_joiners or [],
         "welcome_text": group.welcome_text,
         "welcome_extra_mentions": group.welcome_extra_mentions or [],
+        "welcome_part1_image": group.welcome_part1_image,
         "welcome_part2_enabled": group.welcome_part2_enabled or False,
         "welcome_part2_text": group.welcome_part2_text,
         "welcome_part2_image": group.welcome_part2_image,
@@ -215,13 +218,13 @@ def update_welcome_settings(
 async def upload_welcome_image(
     group_ids: str = Form(...),  # Comma-separated group IDs
     image: UploadFile = File(...),
-    part: str = Form(default="2"),  # Which part: "2" or "3"
+    part: str = Form(default="2"),  # Which part: "1", "2", or "3"
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Upload welcome image for Part 2 or Part 3 and apply to multiple groups"""
-    if part not in ("2", "3"):
-        raise HTTPException(status_code=400, detail="part must be '2' or '3'")
+    """Upload welcome image for Part 1, 2, or 3 and apply to multiple groups"""
+    if part not in ("1", "2", "3"):
+        raise HTTPException(status_code=400, detail="part must be '1', '2', or '3'")
 
     # Parse group IDs
     try:
@@ -255,7 +258,8 @@ async def upload_welcome_image(
         shutil.copyfileobj(image.file, buffer)
 
     # Update all selected groups with the new image path
-    image_field = 'welcome_part3_image' if part == '3' else 'welcome_part2_image'
+    image_field_map = {'1': 'welcome_part1_image', '2': 'welcome_part2_image', '3': 'welcome_part3_image'}
+    image_field = image_field_map[part]
     for group in groups:
         # Delete old image if exists
         old_image = getattr(group, image_field)
@@ -278,13 +282,13 @@ async def upload_welcome_image(
 @router.delete("/{group_id}/image")
 def delete_welcome_image(
     group_id: int,
-    part: str = "2",  # Which part: "2" or "3"
+    part: str = "2",  # Which part: "1", "2", or "3"
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Delete welcome image for a group (Part 2 or Part 3)"""
-    if part not in ("2", "3"):
-        raise HTTPException(status_code=400, detail="part must be '2' or '3'")
+    """Delete welcome image for a group (Part 1, 2, or 3)"""
+    if part not in ("1", "2", "3"):
+        raise HTTPException(status_code=400, detail="part must be '1', '2', or '3'")
 
     group = db.query(MonitoredGroup).filter(
         MonitoredGroup.id == group_id,
@@ -294,7 +298,8 @@ def delete_welcome_image(
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    image_field = 'welcome_part3_image' if part == '3' else 'welcome_part2_image'
+    image_field_map = {'1': 'welcome_part1_image', '2': 'welcome_part2_image', '3': 'welcome_part3_image'}
+    image_field = image_field_map[part]
     image_path = getattr(group, image_field)
 
     if image_path:

@@ -21,9 +21,10 @@ class MonitoredGroup(Base):
     welcome_join_count = Column(Integer, default=0)  # Current counter
     welcome_pending_joiners = Column(JSON, default=list)  # List of joiner phone numbers waiting
 
-    # Welcome Part 1: Mentions for joiners + text + extra mentions
+    # Welcome Part 1: Mentions for joiners + text + extra mentions + optional image
     welcome_text = Column(Text)  # Custom welcome text
     welcome_extra_mentions = Column(JSON)  # Additional phone numbers to always mention
+    welcome_part1_image = Column(String(500))  # Path to uploaded image (optional)
 
     # Welcome Part 2 (optional): Text + Image
     welcome_part2_enabled = Column(Boolean, default=False)

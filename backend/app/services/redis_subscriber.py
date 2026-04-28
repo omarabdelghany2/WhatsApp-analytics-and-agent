@@ -483,16 +483,39 @@ class RedisSubscriber:
 
             print(f"[WELCOME] Sending Part 1 to {group.group_name} with joiner mentions: {unique_joiner_phones}, extra mentions: {extra_mention_phones}")
 
-            # Part 1: Joiner Mentions + Text + Extra Mentions
+            # Part 1: Joiner Mentions + Text + Extra Mentions (+ optional image)
             welcome_text = group.welcome_text or "Welcome!"
 
-            result = await whatsapp_bridge.send_welcome_message(
-                user_id=user_id,
-                group_id=group.whatsapp_group_id,
-                content=welcome_text,
-                joiner_phones=unique_joiner_phones,
-                extra_mention_phones=extra_mention_phones
-            )
+            if group.welcome_part1_image:
+                # Build mention text for caption: @joiners + text + @extras
+                joiner_mention_text = ' '.join([f'@{p}' for p in unique_joiner_phones])
+                extra_mention_text = ' '.join([f'@{p}' for p in extra_mention_phones])
+                caption = ''
+                if joiner_mention_text:
+                    caption = joiner_mention_text + '\n\n'
+                caption += welcome_text
+                if extra_mention_text:
+                    caption += '\n\n' + extra_mention_text
+
+                # Combine all phone numbers for mentions
+                all_mention_phones = unique_joiner_phones + extra_mention_phones
+                mention_ids = [f'{p}@c.us' for p in all_mention_phones]
+
+                result = await whatsapp_bridge.send_media_message(
+                    user_id=user_id,
+                    group_id=group.whatsapp_group_id,
+                    file_path=group.welcome_part1_image,
+                    caption=caption,
+                    mention_ids=mention_ids
+                )
+            else:
+                result = await whatsapp_bridge.send_welcome_message(
+                    user_id=user_id,
+                    group_id=group.whatsapp_group_id,
+                    content=welcome_text,
+                    joiner_phones=unique_joiner_phones,
+                    extra_mention_phones=extra_mention_phones
+                )
 
             if result.get('success'):
                 print(f"[WELCOME] Part 1 sent successfully to {group.group_name}")

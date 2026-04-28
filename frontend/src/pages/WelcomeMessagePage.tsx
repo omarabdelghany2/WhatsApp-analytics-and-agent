@@ -39,6 +39,7 @@ interface WelcomeGroup {
   welcome_join_count: number
   welcome_text: string | null
   welcome_extra_mentions?: string[] | null
+  welcome_part1_image: string | null
   welcome_part2_enabled: boolean
   welcome_part2_text: string | null
   welcome_part2_image: string | null
@@ -60,6 +61,8 @@ export default function WelcomeMessagePage() {
   const [threshold, setThreshold] = useState(1)
   const [welcomeText, setWelcomeText] = useState('')
   const [selectedMemberPhones, setSelectedMemberPhones] = useState<string[]>([])
+  const [selectedImage1, setSelectedImage1] = useState<File | null>(null)
+  const [existingImagePath1, setExistingImagePath1] = useState<string | null>(null)
   const [part2Enabled, setPart2Enabled] = useState(false)
   const [part2Text, setPart2Text] = useState('')
   const [selectedImage, setSelectedImage] = useState<File | null>(null)
@@ -69,6 +72,7 @@ export default function WelcomeMessagePage() {
   const [selectedImage3, setSelectedImage3] = useState<File | null>(null)
   const [existingImagePath3, setExistingImagePath3] = useState<string | null>(null)
 
+  const fileInputRef1 = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const fileInputRef3 = useRef<HTMLInputElement>(null)
 
@@ -194,6 +198,8 @@ export default function WelcomeMessagePage() {
     setThreshold(1)
     setWelcomeText('')
     setSelectedMemberPhones([])
+    setSelectedImage1(null)
+    setExistingImagePath1(null)
     setPart2Enabled(false)
     setPart2Text('')
     setSelectedImage(null)
@@ -211,6 +217,8 @@ export default function WelcomeMessagePage() {
     setThreshold(group.welcome_threshold || 1)
     setWelcomeText(group.welcome_text || '')
     setSelectedMemberPhones(group.welcome_extra_mentions || [])
+    setSelectedImage1(null)
+    setExistingImagePath1(group.welcome_part1_image || null)
     setPart2Enabled(group.welcome_part2_enabled || false)
     setPart2Text(group.welcome_part2_text || '')
     setSelectedImage(null)
@@ -265,6 +273,15 @@ export default function WelcomeMessagePage() {
       part3_enabled: part3Enabled,
       part3_text: part3Text || undefined,
     })
+
+    // Upload Part 1 image if selected
+    if (selectedImage1 && selectedGroups.length > 0) {
+      await uploadImageMutation.mutateAsync({
+        groupIds: selectedGroups,
+        image: selectedImage1,
+        part: '1',
+      })
+    }
 
     // Upload Part 2 image if selected
     if (selectedImage && selectedGroups.length > 0) {
@@ -584,6 +601,78 @@ export default function WelcomeMessagePage() {
                       placeholder="Welcome to the group! Please read the pinned message."
                       className="w-full h-24 px-4 py-3 bg-surface-secondary border border-border rounded-lg text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary resize-none"
                     />
+                  </div>
+
+                  {/* Part 1: Image (Optional) */}
+                  <div>
+                    <label className="block text-sm font-medium text-foreground-secondary mb-2">
+                      Part 1: Image (Optional)
+                    </label>
+                    <p className="text-xs text-muted mb-2">
+                      If set, the welcome message will be sent as an image with the text as caption
+                    </p>
+
+                    {/* Show existing image indicator */}
+                    {existingImagePath1 && !selectedImage1 && (
+                      <div className="mb-3 p-3 bg-green-500/10 border border-green-500/30 rounded-lg flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <ImageIcon size={20} className="text-green-400" />
+                          <span className="text-sm text-green-400">Image already saved</span>
+                        </div>
+                        <button
+                          onClick={async () => {
+                            if (selectedGroups.length === 1) {
+                              await deleteImageMutation.mutateAsync({ groupId: selectedGroups[0], part: '1' })
+                            }
+                            setExistingImagePath1(null)
+                          }}
+                          disabled={deleteImageMutation.isPending}
+                          className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50"
+                        >
+                          {deleteImageMutation.isPending ? 'Removing...' : 'Remove'}
+                        </button>
+                      </div>
+                    )}
+
+                    <input
+                      type="file"
+                      ref={fileInputRef1}
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0]
+                        if (file) setSelectedImage1(file)
+                      }}
+                      className="hidden"
+                    />
+                    <button
+                      onClick={() => fileInputRef1.current?.click()}
+                      className="w-full py-4 bg-surface-secondary border-2 border-dashed border-border rounded-lg hover:border-primary transition-colors flex items-center justify-center gap-2 text-foreground-secondary hover:text-foreground"
+                    >
+                      {selectedImage1 ? (
+                        <>
+                          <Check size={20} className="text-green-400" />
+                          {selectedImage1.name}
+                        </>
+                      ) : existingImagePath1 ? (
+                        <>
+                          <Upload size={20} />
+                          Replace Image
+                        </>
+                      ) : (
+                        <>
+                          <Upload size={20} />
+                          Select Image
+                        </>
+                      )}
+                    </button>
+                    {selectedImage1 && (
+                      <button
+                        onClick={() => setSelectedImage1(null)}
+                        className="mt-2 text-sm text-red-400 hover:text-red-300"
+                      >
+                        Remove selected image
+                      </button>
+                    )}
                   </div>
 
                   {/* Extra Mentions - Member Selector */}

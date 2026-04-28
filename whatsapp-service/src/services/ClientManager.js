@@ -17,8 +17,6 @@ class ClientManager {
         this.GROUPS_CACHE_TTL = 300000;  // Cache groups for 5 minutes
         this.MEMBERS_CACHE_TTL = 300000; // Cache members for 5 minutes
         this.monitoredGroups = new Map(); // userId -> Set<whatsappGroupId>
-        this.clientStartTimes = new Map(); // userId -> Date (for periodic restart)
-        this.RESTART_INTERVAL_MS = 6 * 60 * 60 * 1000; // Restart browsers every 6 hours
         this.isRestarting = false; // Only restart one client at a time
         this.MAX_CONCURRENT_CLIENTS = parseInt(process.env.MAX_CONCURRENT_CLIENTS) || 3; // Limit concurrent browsers
         this.redisPublisher = redisPublisher;
@@ -29,8 +27,8 @@ class ClientManager {
             fs.mkdirSync(dataDir, { recursive: true });
         }
 
-        // Start periodic restart scheduler
-        this._startRestartScheduler();
+        // Start health check to detect silent disconnections
+        this._startHealthCheck();
     }
 
     /**
@@ -53,64 +51,58 @@ class ClientManager {
     }
 
     /**
-     * Periodically restart browsers to flush WhatsApp Web memory leaks.
-     * Checks every 30 minutes, restarts clients older than RESTART_INTERVAL_MS.
-     * Only restarts one client at a time. LocalAuth preserves sessions (no QR re-scan).
+     * Health check: every 5 minutes, ping each "ready" client with getState().
+     * If the session is not CONNECTED, restart the browser to restore it.
      */
-    _startRestartScheduler() {
+    _startHealthCheck() {
         setInterval(async () => {
-            if (this.isRestarting) return;
-
-            const now = Date.now();
-            for (const [userId, startTime] of this.clientStartTimes.entries()) {
-                const uptime = now - startTime;
-                if (uptime < this.RESTART_INTERVAL_MS) continue;
-
-                // Only restart if client is ready and idle (no queued operations)
+            for (const [userId, client] of this.clients.entries()) {
                 const status = this.clientStatus.get(userId);
                 if (status !== 'ready') continue;
-                if (this.operationQueues.has(userId)) continue;
-
-                this.isRestarting = true;
-                console.log(`[RESTART] Restarting browser for user ${userId} (uptime: ${Math.round(uptime / 3600000)}h)`);
-
-                // Notify backend
-                this.redisPublisher.publish('whatsapp:events', {
-                    type: 'restarting',
-                    userId
-                });
+                if (this.isRestarting) continue;
 
                 try {
-                    await this.destroyClient(userId);
+                    const state = await client.getState();
+                    if (state === 'CONNECTED') continue;
 
-                    // Wait a moment for cleanup
+                    console.log(`[HEALTH] User ${userId} state is "${state}" — restarting browser`);
+                } catch (error) {
+                    console.log(`[HEALTH] User ${userId} getState() failed: ${error.message} — restarting browser`);
+                }
+
+                // Restart this client
+                this.isRestarting = true;
+                try {
+                    this.redisPublisher.publish('whatsapp:events', {
+                        type: 'restarting',
+                        userId
+                    });
+
+                    await this.destroyClient(userId);
                     await new Promise(resolve => setTimeout(resolve, 5000));
 
-                    // Reinitialize — LocalAuth will restore the session
                     const result = await this.initializeClient(userId);
                     if (result.success) {
-                        console.log(`[RESTART] Browser restarted for user ${userId}, waiting for ready...`);
-
-                        // Wait for client to be ready (max 90 seconds)
+                        console.log(`[HEALTH] Browser restarted for user ${userId}, waiting for ready...`);
                         const readyTimeout = 90000;
                         const startWait = Date.now();
                         while (Date.now() - startWait < readyTimeout) {
                             const newStatus = this.clientStatus.get(userId);
                             if (newStatus === 'ready') {
-                                console.log(`[RESTART] User ${userId} is ready after restart`);
+                                console.log(`[HEALTH] User ${userId} is ready after restart`);
                                 break;
                             }
                             if (newStatus === 'failed' || newStatus === 'disconnected') {
-                                console.log(`[RESTART] User ${userId} failed after restart: ${newStatus}`);
+                                console.log(`[HEALTH] User ${userId} failed after restart: ${newStatus}`);
                                 break;
                             }
                             await new Promise(resolve => setTimeout(resolve, 5000));
                         }
                     } else {
-                        console.log(`[RESTART] Failed to reinitialize user ${userId}: ${result.message}`);
+                        console.log(`[HEALTH] Failed to reinitialize user ${userId}: ${result.message}`);
                     }
-                } catch (error) {
-                    console.error(`[RESTART] Error restarting user ${userId}:`, error.message);
+                } catch (err) {
+                    console.error(`[HEALTH] Error restarting user ${userId}:`, err.message);
                 } finally {
                     this.isRestarting = false;
                 }
@@ -118,7 +110,7 @@ class ClientManager {
                 // Only restart one client per cycle
                 break;
             }
-        }, 30 * 60 * 1000); // Check every 30 minutes
+        }, 5 * 60 * 1000); // Check every 5 minutes
     }
 
     /**
@@ -358,8 +350,6 @@ class ClientManager {
             console.log(`Client ready for user ${userId}`);
             console.log(`[READY] Client is now ready to receive messages`);
             this.clientStatus.set(userId, 'ready');
-            this.clientStartTimes.set(userId, Date.now());
-
             // Get phone number
             const info = client.info;
             const phoneNumber = info?.wid?.user;
