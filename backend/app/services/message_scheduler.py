@@ -454,10 +454,24 @@ class MessageScheduler:
                         except Exception as e:
                             return {'group_id': gid, 'success': False, 'error': str(e), 'group_name': group.group_name}
 
-                    results = await asyncio.gather(*[set_group_settings(gid) for gid in batch])
+                    results = await asyncio.gather(*[set_group_settings(gid) for gid in batch], return_exceptions=True)
 
                     for r in results:
-                        if r.get('success'):
+                        # Handle unexpected exceptions from gather
+                        if isinstance(r, Exception):
+                            groups_failed += 1
+                            errors.append(f"Unexpected error: {str(r)}")
+                            print(f"[SCHEDULER] Unexpected exception in batch: {r}", flush=True)
+                            await websocket_manager.send_to_user(task.user_id, {
+                                'type': 'settings_progress',
+                                'task_id': task.id,
+                                'action': action,
+                                'group_name': 'Unknown',
+                                'status': 'failed',
+                                'groups_done': groups_success + groups_failed,
+                                'total_groups': len(group_ids)
+                            })
+                        elif r.get('success'):
                             groups_success += 1
                             print(f"[SCHEDULER] Successfully set {action} for {r.get('group_name')}", flush=True)
                             await websocket_manager.send_to_user(task.user_id, {
@@ -465,6 +479,7 @@ class MessageScheduler:
                                 'task_id': task.id,
                                 'action': action,
                                 'group_name': r.get('group_name'),
+                                'status': 'success',
                                 'groups_done': groups_success + groups_failed,
                                 'total_groups': len(group_ids)
                             })
@@ -473,6 +488,15 @@ class MessageScheduler:
                             name = r.get('group_name') or r.get('group_id')
                             errors.append(f"{name}: {r.get('error', 'Unknown error')}")
                             print(f"[SCHEDULER] Failed to set {action} for {name}: {r.get('error')}", flush=True)
+                            await websocket_manager.send_to_user(task.user_id, {
+                                'type': 'settings_progress',
+                                'task_id': task.id,
+                                'action': action,
+                                'group_name': name,
+                                'status': 'failed',
+                                'groups_done': groups_success + groups_failed,
+                                'total_groups': len(group_ids)
+                            })
 
             # Update task status
             task.groups_sent = groups_success

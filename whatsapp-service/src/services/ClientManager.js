@@ -1138,7 +1138,7 @@ class ClientManager {
                 const eventOptions = {};
                 if (options.description) eventOptions.description = options.description;
                 if (options.location) eventOptions.location = options.location;
-                if (options.callType && options.callType !== 'none') eventOptions.callType = options.callType;
+                eventOptions.callType = options.callType || 'none';
                 if (options.endTime) eventOptions.endTime = new Date(options.endTime);
 
                 // Create the ScheduledEvent

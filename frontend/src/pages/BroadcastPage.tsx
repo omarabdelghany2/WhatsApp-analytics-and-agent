@@ -114,7 +114,7 @@ export default function BroadcastPage() {
   const [eventEndTime, setEventEndTime] = useState('')
   const [eventDescription, setEventDescription] = useState('')
   const [eventLocation, setEventLocation] = useState('')
-  const [eventCallType, setEventCallType] = useState<'none' | 'video' | 'voice'>('none')
+  const [eventCallType, setEventCallType] = useState<'none' | 'voice'>('none')
   const [eventSelectedGroups, setEventSelectedGroups] = useState<Group[]>([])
   const [eventGroupsExpanded, setEventGroupsExpanded] = useState(true)
   const [eventMentionType, setEventMentionType] = useState<MentionType>('none')
@@ -1711,7 +1711,7 @@ export default function BroadcastPage() {
                 Call Link
               </label>
               <div className="flex gap-3">
-                {(['none', 'video', 'voice'] as const).map((type) => (
+                {(['none', 'voice'] as const).map((type) => (
                   <button
                     key={type}
                     onClick={() => setEventCallType(type)}
@@ -1721,7 +1721,7 @@ export default function BroadcastPage() {
                         : 'bg-background border-border text-foreground hover:bg-surface'
                     }`}
                   >
-                    {type === 'none' ? 'No Call' : type === 'video' ? 'Video Call' : 'Voice Call'}
+                    {type === 'none' ? 'No Call' : 'Voice Call'}
                   </button>
                 ))}
               </div>
