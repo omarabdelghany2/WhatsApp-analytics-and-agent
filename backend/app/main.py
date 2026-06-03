@@ -23,7 +23,19 @@ def run_migrations():
     from alembic import command
     from sqlalchemy import text, inspect
 
-    # First: ensure all required columns and alembic_version exist (self-healing)
+    # Ensure all base tables exist. Creates the full current schema on a fresh/empty
+    # database (e.g. after the Postgres volume was wiped). Idempotent: it's a no-op for
+    # tables that already exist. Import every model module first so each one is
+    # registered on Base.metadata before create_all runs.
+    try:
+        import app.models  # noqa: F401  (registers most models via __init__)
+        from app.models import agent, whatsapp_session  # noqa: F401  (not in __init__)
+        Base.metadata.create_all(bind=engine)
+        print("[Startup] Ensured all base tables exist (create_all)")
+    except Exception as e:
+        print(f"[Startup] create_all error (non-fatal): {e}")
+
+    # Next: ensure all required columns and alembic_version exist (self-healing)
     try:
         with engine.connect() as conn:
             inspector = inspect(engine)
