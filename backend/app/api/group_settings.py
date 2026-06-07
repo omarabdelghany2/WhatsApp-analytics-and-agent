@@ -348,27 +348,43 @@ def toggle_schedule(
         }
 
 
-async def execute_immediate_settings(
+async def apply_group_settings_sequential(
     user_id: int,
     group_ids: List[int],
     admin_only: bool,
     message: Optional[str],
     mention_type: str,
     mention_ids: Optional[List[str]],
-    db: Session
+    db: Session,
+    on_progress=None,
+    delay_seconds: int = 2,
 ):
-    """Execute group settings change immediately"""
-    action = 'close' if admin_only else 'open'
+    """Shared open/close logic used by BOTH manual control and the scheduler.
+
+    Single source of truth so scheduled and manual open/close behave identically:
+    process groups one at a time, with `delay_seconds` between groups, attempting
+    each group once and continuing on per-group failure (no batching, no
+    all-or-nothing client-ready gate).
+
+    on_progress, if provided, is an async callable invoked after each group:
+        await on_progress(group_name, success: bool, groups_done: int, total: int)
+
+    Returns (groups_success, groups_failed, errors).
+    """
+    import asyncio
+
     groups_success = 0
     groups_failed = 0
-    errors = []
+    errors: List[str] = []
+    total = len(group_ids)
 
     for i, group_id in enumerate(group_ids):
-        # 30-second delay between groups (except first)
+        # Delay between groups (except the first) — matches manual pacing
         if i > 0:
-            import asyncio
-            await asyncio.sleep(30)
+            await asyncio.sleep(delay_seconds)
 
+        group_name = f"Group {group_id}"
+        success = False
         try:
             group = db.query(MonitoredGroup).filter(
                 MonitoredGroup.id == group_id,
@@ -378,43 +394,76 @@ async def execute_immediate_settings(
             if not group:
                 groups_failed += 1
                 errors.append(f"Group {group_id} not found")
-                continue
-
-            # Change group settings
-            result = await whatsapp_bridge.set_group_admin_only(
-                user_id=user_id,
-                group_id=group.whatsapp_group_id,
-                admin_only=admin_only
-            )
-
-            if result.get('success'):
-                groups_success += 1
-
-                # Send optional message if configured
-                if message:
-                    await whatsapp_bridge.send_message(
-                        user_id=user_id,
-                        group_id=group.whatsapp_group_id,
-                        content=message,
-                        mention_all=(mention_type == 'all'),
-                        mention_ids=mention_ids if mention_type == 'selected' else None
-                    )
-
-                # Notify progress
-                await websocket_manager.send_to_user(user_id, {
-                    'type': 'immediate_settings_progress',
-                    'action': action,
-                    'group_name': group.group_name,
-                    'groups_done': groups_success + groups_failed,
-                    'total_groups': len(group_ids)
-                })
             else:
-                groups_failed += 1
-                errors.append(f"{group.group_name}: {result.get('error', 'Unknown error')}")
+                group_name = group.group_name
+                # Change group settings
+                result = await whatsapp_bridge.set_group_admin_only(
+                    user_id=user_id,
+                    group_id=group.whatsapp_group_id,
+                    admin_only=admin_only
+                )
+
+                if result.get('success'):
+                    groups_success += 1
+                    success = True
+
+                    # Send optional message if configured
+                    if message:
+                        await whatsapp_bridge.send_message(
+                            user_id=user_id,
+                            group_id=group.whatsapp_group_id,
+                            content=message,
+                            mention_all=(mention_type == 'all'),
+                            mention_ids=mention_ids if mention_type == 'selected' else None
+                        )
+                else:
+                    groups_failed += 1
+                    errors.append(f"{group_name}: {result.get('error', 'Unknown error')}")
 
         except Exception as e:
             groups_failed += 1
-            errors.append(f"Group {group_id}: {str(e)}")
+            errors.append(f"{group_name}: {str(e)}")
+
+        if on_progress:
+            try:
+                await on_progress(group_name, success, groups_success + groups_failed, total)
+            except Exception:
+                pass
+
+    return groups_success, groups_failed, errors
+
+
+async def execute_immediate_settings(
+    user_id: int,
+    group_ids: List[int],
+    admin_only: bool,
+    message: Optional[str],
+    mention_type: str,
+    mention_ids: Optional[List[str]],
+    db: Session
+):
+    """Execute group settings change immediately (manual control)."""
+    action = 'close' if admin_only else 'open'
+
+    async def on_progress(group_name, success, groups_done, total):
+        await websocket_manager.send_to_user(user_id, {
+            'type': 'immediate_settings_progress',
+            'action': action,
+            'group_name': group_name,
+            'groups_done': groups_done,
+            'total_groups': total
+        })
+
+    groups_success, groups_failed, errors = await apply_group_settings_sequential(
+        user_id=user_id,
+        group_ids=group_ids,
+        admin_only=admin_only,
+        message=message,
+        mention_type=mention_type,
+        mention_ids=mention_ids,
+        db=db,
+        on_progress=on_progress,
+    )
 
     # Notify completion
     await websocket_manager.send_to_user(user_id, {

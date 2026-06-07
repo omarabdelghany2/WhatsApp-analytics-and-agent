@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, time
 from typing import Optional, Dict, Callable, Any
 
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 
 from app.database import SessionLocal
 from app.models.scheduled_message import ScheduledMessage
@@ -400,8 +401,64 @@ class MessageScheduler:
                 'error_message': str(e)
             })
 
+    def _ensure_next_recurrence(self, db: Session, task: ScheduledMessage):
+        """Create the next day's occurrence for a recurring task.
+
+        Safe to call on ANY outcome (success / partial / failure) and idempotent —
+        it will not create a duplicate if a future pending occurrence for this
+        schedule slot already exists. This guarantees a single bad run can never
+        silently kill the recurring schedule.
+        """
+        if not (task.is_recurring and task.recurring_time):
+            return
+        try:
+            parent = task.parent_schedule_id or task.id
+            now = datetime.utcnow()
+
+            # Idempotency: skip if a future pending occurrence for this exact slot
+            # (same schedule + same task type + same time) already exists.
+            existing = db.query(ScheduledMessage).filter(
+                ScheduledMessage.task_type == task.task_type,
+                ScheduledMessage.recurring_time == task.recurring_time,
+                ScheduledMessage.status == 'pending',
+                ScheduledMessage.scheduled_at > now,
+                or_(
+                    ScheduledMessage.parent_schedule_id == parent,
+                    ScheduledMessage.id == parent,
+                ),
+            ).first()
+            if existing:
+                return
+
+            next_run = self._calculate_next_run(task.recurring_time)
+            new_task = ScheduledMessage(
+                user_id=task.user_id,
+                task_type=task.task_type,
+                is_recurring=True,
+                recurring_time=task.recurring_time,
+                parent_schedule_id=parent,
+                content=task.content,
+                group_ids=task.group_ids,
+                group_names=task.group_names,
+                mention_type=task.mention_type,
+                mention_ids=task.mention_ids,
+                scheduled_at=next_run,
+                status='pending',
+            )
+            db.add(new_task)
+            db.commit()
+            print(f"[SCHEDULER] Created recurring {task.task_type} task for {next_run}", flush=True)
+        except Exception as e:
+            print(f"[SCHEDULER] Failed to create next recurrence for task {task.id}: {e}", flush=True)
+            db.rollback()
+
     async def _process_group_settings(self, db: Session, task: ScheduledMessage, admin_only: bool):
-        """Process group settings change task (open or close groups)"""
+        """Process a scheduled open/close task.
+
+        Uses the SAME sequential logic as manual control (one group at a time, 30s
+        apart, attempt-once, per-group failures, no all-or-nothing client-ready
+        gate) so scheduled and manual open/close behave identically.
+        """
         action = 'close' if admin_only else 'open'
         print(f"[SCHEDULER] Processing {action} groups for task {task.id}, user {task.user_id}", flush=True)
 
@@ -409,94 +466,30 @@ class MessageScheduler:
         db.commit()
 
         try:
-            group_ids = task.group_ids or []
-            groups_success = 0
-            groups_failed = 0
-            errors = []
+            # Reuse the exact manual-control logic (single source of truth).
+            from app.api.group_settings import apply_group_settings_sequential
 
-            # Health check once before starting
-            if not await self._ensure_client_ready(task.user_id):
-                errors.append("WhatsApp client not ready - recovery failed")
-                groups_failed = len(group_ids)
-                print(f"[SCHEDULER] Aborting group settings - client not ready", flush=True)
-            else:
-                # Batch-load all groups upfront
-                all_groups = db.query(MonitoredGroup).filter(
-                    MonitoredGroup.id.in_(group_ids),
-                    MonitoredGroup.user_id == task.user_id
-                ).all()
-                groups_map = {g.id: g for g in all_groups}
+            async def on_progress(group_name, success, groups_done, total):
+                await websocket_manager.send_to_user(task.user_id, {
+                    'type': 'settings_progress',
+                    'task_id': task.id,
+                    'action': action,
+                    'group_name': group_name,
+                    'status': 'success' if success else 'failed',
+                    'groups_done': groups_done,
+                    'total_groups': total
+                })
 
-                # Process in batches of 5
-                for batch_start in range(0, len(group_ids), self.BATCH_SIZE):
-                    batch = group_ids[batch_start:batch_start + self.BATCH_SIZE]
-
-                    async def set_group_settings(gid):
-                        group = groups_map.get(gid)
-                        if not group:
-                            return {'group_id': gid, 'success': False, 'error': f'Group {gid} not found', 'group_name': None}
-                        try:
-                            result = await self._send_with_retry(
-                                lambda g=group: whatsapp_bridge.set_group_admin_only(
-                                    user_id=task.user_id, group_id=g.whatsapp_group_id, admin_only=admin_only
-                                )
-                            )
-                            if result.get('success') and task.content:
-                                await self._send_with_retry(
-                                    lambda g=group: whatsapp_bridge.send_message(
-                                        user_id=task.user_id, group_id=g.whatsapp_group_id,
-                                        content=task.content,
-                                        mention_all=(task.mention_type == 'all'),
-                                        mention_ids=task.mention_ids if task.mention_type == 'selected' else None
-                                    )
-                                )
-                            return {'group_id': gid, 'group_name': group.group_name, **result}
-                        except Exception as e:
-                            return {'group_id': gid, 'success': False, 'error': str(e), 'group_name': group.group_name}
-
-                    results = await asyncio.gather(*[set_group_settings(gid) for gid in batch], return_exceptions=True)
-
-                    for r in results:
-                        # Handle unexpected exceptions from gather
-                        if isinstance(r, Exception):
-                            groups_failed += 1
-                            errors.append(f"Unexpected error: {str(r)}")
-                            print(f"[SCHEDULER] Unexpected exception in batch: {r}", flush=True)
-                            await websocket_manager.send_to_user(task.user_id, {
-                                'type': 'settings_progress',
-                                'task_id': task.id,
-                                'action': action,
-                                'group_name': 'Unknown',
-                                'status': 'failed',
-                                'groups_done': groups_success + groups_failed,
-                                'total_groups': len(group_ids)
-                            })
-                        elif r.get('success'):
-                            groups_success += 1
-                            print(f"[SCHEDULER] Successfully set {action} for {r.get('group_name')}", flush=True)
-                            await websocket_manager.send_to_user(task.user_id, {
-                                'type': 'settings_progress',
-                                'task_id': task.id,
-                                'action': action,
-                                'group_name': r.get('group_name'),
-                                'status': 'success',
-                                'groups_done': groups_success + groups_failed,
-                                'total_groups': len(group_ids)
-                            })
-                        else:
-                            groups_failed += 1
-                            name = r.get('group_name') or r.get('group_id')
-                            errors.append(f"{name}: {r.get('error', 'Unknown error')}")
-                            print(f"[SCHEDULER] Failed to set {action} for {name}: {r.get('error')}", flush=True)
-                            await websocket_manager.send_to_user(task.user_id, {
-                                'type': 'settings_progress',
-                                'task_id': task.id,
-                                'action': action,
-                                'group_name': name,
-                                'status': 'failed',
-                                'groups_done': groups_success + groups_failed,
-                                'total_groups': len(group_ids)
-                            })
+            groups_success, groups_failed, errors = await apply_group_settings_sequential(
+                user_id=task.user_id,
+                group_ids=task.group_ids or [],
+                admin_only=admin_only,
+                message=task.content,
+                mention_type=task.mention_type,
+                mention_ids=task.mention_ids,
+                db=db,
+                on_progress=on_progress,
+            )
 
             # Update task status
             task.groups_sent = groups_success
@@ -513,26 +506,6 @@ class MessageScheduler:
             if errors:
                 task.error_message = "; ".join(errors)
 
-            # If recurring, schedule next occurrence for tomorrow
-            if task.is_recurring and task.recurring_time:
-                next_run = self._calculate_next_run(task.recurring_time)
-                new_task = ScheduledMessage(
-                    user_id=task.user_id,
-                    task_type=task.task_type,
-                    is_recurring=True,
-                    recurring_time=task.recurring_time,
-                    parent_schedule_id=task.parent_schedule_id or task.id,
-                    content=task.content,
-                    group_ids=task.group_ids,
-                    group_names=task.group_names,
-                    mention_type=task.mention_type,
-                    mention_ids=task.mention_ids,
-                    scheduled_at=next_run,
-                    status='pending'
-                )
-                db.add(new_task)
-                print(f"[SCHEDULER] Created recurring task for {next_run}", flush=True)
-
             db.commit()
 
             # Notify user of completion via WebSocket
@@ -546,13 +519,16 @@ class MessageScheduler:
                 'error_message': task.error_message
             })
 
-            print(f"[SCHEDULER] Task {task.id} ({action}) completed: {task.status}")
+            print(f"[SCHEDULER] Task {task.id} ({action}) completed: {task.status}", flush=True)
 
         except Exception as e:
             print(f"[SCHEDULER] Fatal error processing task {task.id}: {e}", flush=True)
-            task.status = 'failed'
-            task.error_message = str(e)
-            db.commit()
+            try:
+                task.status = 'failed'
+                task.error_message = str(e)
+                db.commit()
+            except Exception:
+                db.rollback()
 
             # Notify user of failure
             await websocket_manager.send_to_user(task.user_id, {
@@ -562,6 +538,11 @@ class MessageScheduler:
                 'status': 'failed',
                 'error_message': str(e)
             })
+
+        finally:
+            # ALWAYS schedule the next occurrence so a bad run can never silently
+            # kill the recurring schedule (idempotent — no duplicates).
+            self._ensure_next_recurrence(db, task)
 
     async def _process_event(self, db: Session, scheduled_msg: ScheduledMessage):
         """Send a scheduled event in batches of 5 groups"""
